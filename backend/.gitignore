@@ -216,3 +216,122 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Python packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Type checking
+.mypy_cache/
+.pyre/
+.pytype/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# =========================
+# React Native / Node.js
+# =========================
+node_modules/
+
+# Expo
+.expo/
+.expo-shared/
+
+# Metro
+.metro-health-check*
+
+# Build
+android/app/build/
+android/build/
+ios/build/
+
+# Gradle
+.gradle/
+
+# Android
+android/.cxx/
+android/local.properties
+*.keystore
+*.jks
+
+# iOS
+ios/Pods/
+ios/DerivedData/
+
+# npm / yarn / pnpm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Cache
+.cache/
+.tmp/
+.temp/
+
+# Bundles
+*.bundle
+
+# =========================
+# Firebase / Google
+# =========================
+google-services.json
+GoogleService-Info.plist
+firebase-service-account.json
+
+# =========================
+# Secrets
+# =========================
+*.pem
+*.key
+*.p12
+*.pfx
+
+# =========================
+# Coverage
+# =========================
+coverage/
+*.lcov
+
+# =========================
+# Misc
+# =========================
+*.swp
+*.swo
