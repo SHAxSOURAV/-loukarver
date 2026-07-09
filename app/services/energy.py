@@ -5,6 +5,9 @@ from datetime import datetime, timezone
 
 from app.core.config import settings
 from app.schemas.energy import EnergyCreate, EnergyUpdate, EnergyPatchShare
+from app.services.notification import notification_service
+from app.schemas.notification import NotificationCreate, NotificationType
+from app.core.websocket import ws_manager
 
 class EnergyService:
     def __init__(self) -> None:
@@ -21,6 +24,36 @@ class EnergyService:
         
         result = await self.energy_logs.insert_one(new_doc)
         new_doc["id"] = str(result.inserted_id)
+        
+        # Send Notification and WebSocket if shared
+        if payload.share_with_partner:
+            user = await self.users.find_one({"_id": ObjectId(user_id)})
+            if user and user.get("partner") and user["partner"].get("user_id"):
+                partner_id = user["partner"]["user_id"]
+                user_name = user.get("name", "Your partner")
+                
+                # Websocket
+                await ws_manager.send_personal_message(
+                    partner_id, 
+                    {"type": "ENERGY_UPDATED"}
+                )
+                
+                # Push notification
+                try:
+                    await notification_service.schedule_notification(
+                        sender_id=user_id,
+                        payload=NotificationCreate(
+                            recipient_id=partner_id,
+                            title="State Updated",
+                            message=f"{user_name} just updated their daily energy & sleep.",
+                            type=NotificationType.SYSTEM,
+                            scheduled_for=datetime.now(timezone.utc),
+                            timezone="UTC"
+                        )
+                    )
+                except Exception as e:
+                    print(f"Failed to send energy notification: {e}")
+                    
         return new_doc
 
     async def get_energy_logs(self, user_id: str) -> List[Dict[str, Any]]:
@@ -56,6 +89,36 @@ class EnergyService:
         if result:
             result["id"] = str(result["_id"])
             del result["_id"]
+            
+            # Send Notification and WebSocket if shared
+            if updates.get("share_with_partner"):
+                user = await self.users.find_one({"_id": ObjectId(user_id)})
+                if user and user.get("partner") and user["partner"].get("user_id"):
+                    partner_id = user["partner"]["user_id"]
+                    user_name = user.get("name", "Your partner")
+                    
+                    # Websocket
+                    await ws_manager.send_personal_message(
+                        partner_id, 
+                        {"type": "ENERGY_UPDATED"}
+                    )
+                    
+                    # Push notification
+                    try:
+                        await notification_service.schedule_notification(
+                            sender_id=user_id,
+                            payload=NotificationCreate(
+                                recipient_id=partner_id,
+                                title="State Updated",
+                                message=f"{user_name} updated their daily energy & sleep.",
+                                type=NotificationType.SYSTEM,
+                                scheduled_for=datetime.now(timezone.utc),
+                                timezone="UTC"
+                            )
+                        )
+                    except Exception as e:
+                        print(f"Failed to send energy notification: {e}")
+                        
             return result
         return None
 

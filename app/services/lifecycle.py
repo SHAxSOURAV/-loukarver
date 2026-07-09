@@ -23,21 +23,28 @@ class LifeCycleService:
     async def _get_owner_and_partner(self, user_id: str):
         """Returns the user ID of the woman in the relationship (the owner) and partner ID."""
         user = await self.users.find_one({"_id": ObjectId(user_id)})
-        # For simplicity, we assume the person logging periods is the owner.
-        # In a real app, we might check gender, but here we scope by the person who has period data.
-        # If the current user has NO periods but their partner DOES, then the partner is the owner.
-        
-        has_periods = await self.periods.count_documents({"user_id": user_id})
-        
         partner_id = None
         if user and user.get("is_aligned") and user.get("partner"):
             partner_id = user["partner"].get("user_id")
+
+        # Determine if user is Female
+        user_gender = user.get("gender", "Male") if user else "Male"
+        
+        partner_gender = "Male"
+        if partner_id:
+            partner = await self.users.find_one({"_id": ObjectId(partner_id)})
+            if partner:
+                partner_gender = partner.get("gender", "Male")
+
+        # If user is female, she owns her cycle dashboard view.
+        if user_gender == "Female":
+            return user_id, partner_id
             
-        if not has_periods and partner_id:
-            partner_has_periods = await self.periods.count_documents({"user_id": partner_id})
-            if partner_has_periods:
-                return partner_id, user_id # Partner is the owner of the cycle
-                
+        # If user is Male and partner is Female, partner owns the cycle.
+        if partner_gender == "Female":
+            return partner_id, user_id
+            
+        # Default fallback if neither or both are male
         return user_id, partner_id
 
     @staticmethod
