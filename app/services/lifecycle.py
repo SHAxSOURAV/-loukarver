@@ -84,12 +84,32 @@ class LifeCycleService:
         years = days // 365
         return f"{years} year{'s' if years != 1 else ''} ago"
 
+    async def set_share_status(self, user_id: str, is_shared: bool) -> Dict[str, Any]:
+        """Sets the sharing status of cycle data for the user."""
+        from bson import ObjectId
+        await self.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"cycle_data_shared": is_shared}}
+        )
+        return {"success": True}
+
     async def get_cycle_stats(self, user_id: str) -> Dict[str, Any]:
         owner_id, partner_id = await self._get_owner_and_partner(user_id)
         
-        # Fetch the period owner's name
+        # Fetch the period owner's name and sharing status
         owner_user = await self.users.find_one({"_id": ObjectId(owner_id)})
         period_user_name = owner_user.get("name") if owner_user else None
+        is_shared = owner_user.get("cycle_data_shared", True) if owner_user else True
+        
+        # If user is a partner and sharing is disabled, return empty data
+        if user_id != owner_id and not is_shared:
+            return {
+                "period_user_name": period_user_name,
+                "is_shared": False,
+                "stats": None,
+                "history": [],
+                "current_note": None
+            }
         
         cursor = self.periods.find({"user_id": owner_id}).sort("start_date", -1)
         history = await cursor.to_list(length=10) # Last 10 periods for averaging
@@ -97,6 +117,7 @@ class LifeCycleService:
         if not history:
             return {
                 "period_user_name": period_user_name,
+                "is_shared": is_shared,
                 "stats": None,
                 "history": [],
                 "current_note": await self._get_current_note(owner_id, user_id, viewer_tz="UTC")
@@ -166,6 +187,7 @@ class LifeCycleService:
         
         return {
             "period_user_name": period_user_name,
+            "is_shared": is_shared,
             "stats": stats,
             "history": [{"id": p["id"], "user_id": p["user_id"], "start_date": p["start_date"]} for p in parsed_history],
             "current_note": await self._get_current_note(owner_id, user_id, viewer_tz="UTC")
@@ -253,6 +275,28 @@ class LifeCycleService:
             {"$set": new_note},
             upsert=True
         )
+        
+        # Dispatch notification to partner if sharing is enabled
+        owner_id, partner_id = await self._get_owner_and_partner(user_id)
+        if partner_id:
+            owner_user = await self.users.find_one({"_id": ObjectId(owner_id)})
+            is_shared = owner_user.get("cycle_data_shared", True) if owner_user else True
+            if is_shared:
+                from app.services.notification import notification_service
+                from app.schemas.notification import NotificationCreate, NotificationType
+                owner_name = owner_user.get("name", "Your partner") if owner_user else "Your partner"
+                await notification_service.schedule_notification(
+                    sender_id=user_id,
+                    payload=NotificationCreate(
+                        recipient_id=partner_id,
+                        type=NotificationType.CYCLE_UPDATE,
+                        title="Cycle Note Updated",
+                        message=f"{owner_name} added a cycle note.",
+                        scheduled_for=now_utc,
+                        timezone=payload.timezone
+                    )
+                )
+
         doc = await self.notes.find_one({"user_id": user_id, "date": auto_date})
         created_at = doc.get("created_at")
         created_ago = self._get_relative_time(created_at) if created_at else "just now"

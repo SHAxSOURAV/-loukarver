@@ -33,7 +33,7 @@ class EnergyService:
                 user_name = user.get("name", "Your partner")
                 
                 # Websocket
-                await ws_manager.send_personal_message(
+                await ws_manager.broadcast_to_user(
                     partner_id, 
                     {"type": "ENERGY_UPDATED"}
                 )
@@ -98,7 +98,7 @@ class EnergyService:
                     user_name = user.get("name", "Your partner")
                     
                     # Websocket
-                    await ws_manager.send_personal_message(
+                    await ws_manager.broadcast_to_user(
                         partner_id, 
                         {"type": "ENERGY_UPDATED"}
                     )

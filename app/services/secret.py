@@ -10,6 +10,9 @@ import zoneinfo
 from fastapi import UploadFile
 
 from app.core.config import settings
+from app.core.websocket import ws_manager
+from app.services.notification import notification_service
+import asyncio
 
 def parse_duration(duration_str: str) -> timedelta:
     """Parses strings like '10 Minutes', '1 Hours', '10 Seconds'."""
@@ -83,22 +86,39 @@ class SecretService:
             shutil.copyfileobj(file.file, buffer)
 
         # Create database entry
+        is_video = file.content_type and file.content_type.startswith("video/")
         new_doc = {
             "sender_id": sender_id,
             "recipient_id": partner_id,
             "filename": file.filename,
             "stored_filename": unique_filename,
             "file_type": file.content_type,
+            "is_video": is_video,
             "size": os.path.getsize(full_path),
             "prevent_screenshot": prevent_screenshot,
             "delete_after": delete_after,
             "created_at": now,
             "expires_at": expires_at,
-            "is_viewed": False
+            "is_viewed": False,
+            "status": "delivered",
+            "rewatch_status": "none"
         }
         
         result = await self.secrets_collection.insert_one(new_doc)
         new_doc["id"] = str(result.inserted_id)
+        
+        # Fire websocket to recipient
+        await ws_manager.broadcast_to_user(partner_id, {"type": "SECRET_DELIVERED"})
+        
+        # Send Push Notification
+        u_name, p_name = await self._get_names(sender_id, partner_id)
+        asyncio.create_task(notification_service.send_onesignal_push(
+            partner_id, 
+            f"New Secret from {u_name}!", 
+            "They sent you something for your eyes only 🤫",
+            {"url": "loukarver://connect"}
+        ))
+        
         return new_doc
 
     async def get_secrets_for_me(self, user_id: str, page: int = 1, size: int = 10, user_timezone: str = "UTC") -> Tuple[List[Dict[str, Any]], int]:
@@ -106,7 +126,7 @@ class SecretService:
         u_name, p_name = await self._get_names(user_id, partner_id)
 
         skip = (page - 1) * size
-        query = {"recipient_id": user_id, "is_viewed": False}
+        query = {"recipient_id": user_id}
         
         cursor = self.secrets_collection.find(query).sort("created_at", -1).skip(skip).limit(size)
         docs = await cursor.to_list(length=None)
@@ -125,6 +145,8 @@ class SecretService:
             d["partner_name"] = p_name
             if "prevent_screenshot" not in d:
                 d["prevent_screenshot"] = True
+            if "is_video" not in d:
+                d["is_video"] = False
             
             # Timezone conversion
             for field in ["created_at", "expires_at"]:
@@ -142,7 +164,13 @@ class SecretService:
         u_name, p_name = await self._get_names(user_id, partner_id)
 
         skip = (page - 1) * size
-        query = {"sender_id": user_id, "is_viewed": False}
+        query = {
+            "sender_id": user_id,
+            "$or": [
+                {"is_viewed": False},
+                {"rewatch_status": "requested"}
+            ]
+        }
         
         cursor = self.secrets_collection.find(query).sort("created_at", -1).skip(skip).limit(size)
         docs = await cursor.to_list(length=None)
@@ -161,6 +189,8 @@ class SecretService:
             d["partner_name"] = p_name
             if "prevent_screenshot" not in d:
                 d["prevent_screenshot"] = True
+            if "is_video" not in d:
+                d["is_video"] = False
 
             # Timezone conversion
             for field in ["created_at", "expires_at"]:
@@ -205,10 +235,101 @@ class SecretService:
         return doc
 
     async def mark_secret_viewed(self, secret_id: str):
+        # Fetch it first to get the sender_id
+        doc = await self.secrets_collection.find_one({"_id": ObjectId(secret_id)})
+        if not doc:
+            return
+
         await self.secrets_collection.update_one(
             {"_id": ObjectId(secret_id)},
-            {"$set": {"is_viewed": True, "viewed_at": datetime.now(timezone.utc)}}
+            {"$set": {
+                "is_viewed": True, 
+                "status": "viewed", 
+                "viewed_at": datetime.now(timezone.utc),
+                "rewatch_status": "none"
+            }}
         )
+        
+        # Fire websocket back to sender for read receipts
+        await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_VIEWED"})
+
+    async def request_rewatch(self, secret_id: str, user_id: str):
+        doc = await self.secrets_collection.find_one({"_id": ObjectId(secret_id), "recipient_id": user_id})
+        if not doc:
+            raise ValueError("Secret not found or you are not the recipient.")
+        
+        await self.secrets_collection.update_one(
+            {"_id": ObjectId(secret_id)},
+            {"$set": {"rewatch_status": "requested"}}
+        )
+        await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_REWATCH_REQUESTED"})
+        
+        # Send Push Notification to Sender
+        u_name, p_name = await self._get_names(user_id, doc["sender_id"])
+        asyncio.create_task(notification_service.send_onesignal_push(
+            doc["sender_id"], 
+            f"{u_name} asked to rewatch!", 
+            "They want to see your secret one more time.",
+            {"url": "loukarver://connect"}
+        ))
+        
+    async def approve_rewatch(self, secret_id: str, user_id: str):
+        doc = await self.secrets_collection.find_one({"_id": ObjectId(secret_id), "sender_id": user_id})
+        if not doc:
+            raise ValueError("Secret not found or you are not the sender.")
+            
+        await self.secrets_collection.update_one(
+            {"_id": ObjectId(secret_id)},
+            {"$set": {"rewatch_status": "approved", "is_viewed": False, "status": "delivered"}}
+        )
+        await ws_manager.broadcast_to_user(doc["recipient_id"], {"type": "SECRET_REWATCH_APPROVED"})
+        
+        # Send Push Notification
+        u_name, p_name = await self._get_names(user_id, doc["recipient_id"])
+        asyncio.create_task(notification_service.send_onesignal_push(
+            doc["recipient_id"], 
+            f"{u_name} Approved!", 
+            "You have 24 hours to rewatch their secret.",
+            {"url": "loukarver://secrethistory"}
+        ))
+
+    async def decline_rewatch(self, secret_id: str, user_id: str):
+        doc = await self.secrets_collection.find_one({"_id": ObjectId(secret_id), "sender_id": user_id})
+        if not doc:
+            raise ValueError("Secret not found or you are not the sender.")
+            
+        await self.secrets_collection.update_one(
+            {"_id": ObjectId(secret_id)},
+            {"$set": {"rewatch_status": "denied"}}
+        )
+        await ws_manager.broadcast_to_user(doc["recipient_id"], {"type": "SECRET_REWATCH_DENIED"})
+        
+        # Send Push Notification to Recipient
+        u_name, p_name = await self._get_names(user_id, doc["recipient_id"])
+        asyncio.create_task(notification_service.send_onesignal_push(
+            doc["recipient_id"], 
+            f"Rewatch Denied", 
+            f"{u_name} chose to keep it a secret.",
+            {"url": "loukarver://connect"}
+        ))
+
+    async def revoke_secret(self, secret_id: str, user_id: str):
+        doc = await self.secrets_collection.find_one({"_id": ObjectId(secret_id), "sender_id": user_id})
+        if not doc:
+            raise ValueError("Secret not found or you are not the sender.")
+        
+        if doc.get("is_viewed"):
+            raise ValueError("Cannot revoke a secret that has already been viewed.")
+            
+        # Physically delete the file
+        file_path = self.get_full_path(doc["stored_filename"])
+        self.delete_file(file_path)
+        
+        # Delete from DB
+        await self.secrets_collection.delete_one({"_id": ObjectId(secret_id)})
+        
+        # Emit WebSocket to recipient so it vanishes from their UI
+        await ws_manager.broadcast_to_user(doc["recipient_id"], {"type": "SECRET_REVOKED"})
 
     def get_full_path(self, stored_filename: str) -> str:
         return os.path.join(self.storage_path, stored_filename)

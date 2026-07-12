@@ -57,10 +57,14 @@ class LifeCycleStats(BaseModel):
     days_until_next_period: int
     phase_description: str
 
+class CycleShareToggle(BaseModel):
+    is_shared: bool = Field(..., description="Whether to share cycle data with partner")
+
 class LifeCycleResponse(BaseModel):
     success: bool
     message: str
     period_user_name: Optional[str] = None
+    is_shared: bool = True
     stats: Optional[LifeCycleStats] = None
     recent_history: List[PeriodResponseData] = []
     current_note: Optional[PhaseNoteResponseData] = None

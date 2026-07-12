@@ -143,13 +143,45 @@ async def get_incomplete_ideas(
 
 @router.patch("/active/{progress_id}/done", response_model=IdeaProgressResponse)
 async def mark_idea_done(progress_id: str, current_user: dict = Depends(get_current_user)):
-    """Mark an active idea as done for the current user."""
+    """Mark an active idea as done. If both mark done, it moves to completed."""
     try:
         result = await idea_service.mark_idea_done(progress_id, current_user["id"])
+        return IdeaProgressResponse(success=True, data=result)
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.patch("/active/{progress_id}/cancel-request", response_model=IdeaProgressResponse)
+async def request_cancel_idea(progress_id: str, current_user: dict = Depends(get_current_user)):
+    """Manually request to cancel an idea. Requires partner approval."""
+    try:
+        result = await idea_service.request_cancel_idea(progress_id, current_user["id"])
+        return IdeaProgressResponse(success=True, data=result)
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.patch("/active/{progress_id}/cancel-respond", response_model=IdeaProgressResponse)
+async def respond_cancel_idea(progress_id: str, approved: bool = Query(...), current_user: dict = Depends(get_current_user)):
+    """Respond to a partner's cancellation request."""
+    try:
+        result = await idea_service.respond_cancel_idea(progress_id, current_user["id"], approved)
         return IdeaProgressResponse(success=True, data=result)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except PermissionError as pe:
         raise HTTPException(status_code=403, detail=str(pe))
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

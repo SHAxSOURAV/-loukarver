@@ -4,8 +4,10 @@ from datetime import datetime
 
 class InteractionState(BaseModel):
     partner_name: str
-    count: int
-    last_activity: Optional[datetime] = None
+    received_count: int
+    received_last_activity: Optional[datetime] = None
+    sent_count: int
+    sent_last_activity: Optional[datetime] = None
 
 class InteractionResponse(BaseModel):
     success: bool

@@ -3,7 +3,7 @@ from app.routers.auth import get_current_user
 from app.schemas.lifecycle import (
     PeriodCreate, PeriodUpdate, PeriodResponseData,
     PhaseNoteCreate, PhaseNoteUpdate, PhaseNoteResponseData,
-    LifeCycleResponse, LifeCycleStats
+    LifeCycleResponse, LifeCycleStats, CycleShareToggle
 )
 from app.services.lifecycle import lifecycle_service
 
@@ -32,10 +32,22 @@ async def get_lifecycle_overview(current_user: dict = Depends(get_current_user))
             success=True,
             message="Overview retrieved successfully.",
             period_user_name=data.get("period_user_name"),
+            is_shared=data.get("is_shared", True),
             stats=stats,
             recent_history=history,
             current_note=current_note
         )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Settings CRUD ---
+
+@router.patch("/settings/share", status_code=status.HTTP_200_OK)
+async def toggle_cycle_sharing(payload: CycleShareToggle, current_user: dict = Depends(get_current_user)):
+    """Toggles whether cycle data is shared with the partner."""
+    try:
+        await lifecycle_service.set_share_status(current_user["id"], payload.is_shared)
+        return {"success": True, "message": f"Cycle data sharing is now {'on' if payload.is_shared else 'off'}."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

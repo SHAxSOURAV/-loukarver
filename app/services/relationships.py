@@ -97,7 +97,8 @@ class RelationshipService:
                         "name": partner["name"],
                         "city_name": partner["city_name"],
                         "relationship_start_date": partner["relationship_start_date"],
-                        "is_long_distance": partner["is_long_distance"]
+                        "is_long_distance": partner["is_long_distance"],
+                        "gender": partner.get("gender", "Not to say")
                     }
                 }
             }
@@ -115,7 +116,8 @@ class RelationshipService:
                         "name": initiator["name"],
                         "city_name": initiator["city_name"],
                         "relationship_start_date": initiator["relationship_start_date"],
-                        "is_long_distance": initiator["is_long_distance"]
+                        "is_long_distance": initiator["is_long_distance"],
+                        "gender": initiator.get("gender", "Not to say")
                     }
                 }
             }
@@ -142,7 +144,8 @@ class RelationshipService:
             "name": relationship.name,
             "city_name": relationship.city_name,
             "relationship_start_date": relationship.relationship_start_date,
-            "is_long_distance": relationship.is_long_distance
+            "is_long_distance": relationship.is_long_distance,
+            "gender": getattr(relationship, "gender", "Not to say")
         }
 
         # If they don't have a secret key and are not aligned, generate one
@@ -366,6 +369,18 @@ class RelationshipService:
             {"_id": ObjectId(user_id)},
             {"$set": updates}
         )
+        
+        # If gender was updated, sync to partner's record
+        if "gender" in updates:
+            user = await self.collection.find_one({"_id": ObjectId(user_id)})
+            partner = user.get("partner") if user else None
+            partner_id = partner.get("user_id") if partner else None
+            if partner_id:
+                await self.collection.update_one(
+                    {"_id": ObjectId(partner_id)},
+                    {"$set": {"partner.gender": updates["gender"]}}
+                )
+        
         updated = await self.collection.find_one({"_id": ObjectId(user_id)})
         if updated and "_id" in updated:
             updated["id"] = str(updated["_id"])

@@ -50,6 +50,8 @@ class IdeaProgressRead(BaseModel):
     created_at: datetime
     is_completed: bool = False
     is_expired: bool = False
+    has_user_requested_cancel: bool = False
+    has_partner_requested_cancel: bool = False
 
 class IdeaListResponse(BaseModel):
     success: bool

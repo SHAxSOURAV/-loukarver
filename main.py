@@ -68,6 +68,10 @@ async def startup_event():
     await vibe_card_service.init_indexes()
     await vibe_date_service.init_indexes()
     await vibe_pulse_service.init_indexes()
+    
+    # Start background scheduler
+    from app.scheduler import start_scheduler
+    start_scheduler()
 
 # Include Routers
 app.include_router(relationships.router)

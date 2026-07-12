@@ -48,11 +48,11 @@ class NotificationService:
         
         # Send OneSignal Push Notification
         import asyncio
-        asyncio.create_task(self._send_onesignal_push(payload.recipient_id, new_doc.get("title", ""), new_doc.get("message", "")))
+        asyncio.create_task(self.send_onesignal_push(payload.recipient_id, new_doc.get("title", ""), new_doc.get("message", "")))
         
         return await self._map_notification(new_doc, payload.timezone)
 
-    async def _send_onesignal_push(self, user_id: str, title: str, message: str) -> None:
+    async def send_onesignal_push(self, user_id: str, title: str, message: str, custom_data: dict = None) -> None:
         if not settings.ONESIGNAL_APP_ID or not settings.ONESIGNAL_REST_API_KEY:
             return
             
@@ -69,6 +69,8 @@ class NotificationService:
             "headings": {"en": title},
             "contents": {"en": message},
         }
+        if custom_data:
+            payload["data"] = custom_data
         
         try:
             async with httpx.AsyncClient() as client:

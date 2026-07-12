@@ -8,20 +8,19 @@ from fastapi.responses import FileResponse
 from app.schemas.relationships import RelationshipCreate, RelationshipResponse, AlignRequest, AlignResponse, BreakAlignmentRequest
 from app.services.relationships import relationship_service
 from app.routers.auth import get_current_user
-from app.schemas.auth import UserUpdate
+from app.schemas.auth import UserUpdate, UserMeResponse
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
-@router.patch("/me", response_model=RelationshipResponse, status_code=status.HTTP_200_OK, response_model_exclude_none=True)
+@router.patch("/me", response_model=UserMeResponse, status_code=status.HTTP_200_OK, response_model_exclude_none=True)
 async def update_user_profile_endpoint(payload: UserUpdate, current_user: dict = Depends(get_current_user)):
     """Updates the authenticated user's profile details."""
     try:
-        updated = await relationship_service.update_user(current_user["id"], payload.model_dump())
-        return RelationshipResponse(
-            success=True,
-            message="Profile updated successfully!",
-            data=updated
-        )
+        update_data = {k: v for k, v in payload.model_dump().items() if v is not None}
+        if not update_data:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update.")
+        updated = await relationship_service.update_user(current_user["id"], update_data)
+        return updated
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

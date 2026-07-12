@@ -4,6 +4,9 @@ from bson import ObjectId
 from datetime import datetime, timezone, timedelta
 
 from app.core.config import settings
+from app.core.websocket import ws_manager
+from app.services.notification import notification_service
+from app.schemas.notification import NotificationCreate, NotificationType
 
 class InteractionService:
     def __init__(self) -> None:
@@ -64,6 +67,23 @@ class InteractionService:
             },
             upsert=True
         )
+
+        try:
+            await ws_manager.broadcast_to_user(info["partner_id"], {"type": "POKE_RECEIVED"})
+            await notification_service.schedule_notification(
+                sender_id=user_id,
+                payload=NotificationCreate(
+                    recipient_id=info["partner_id"],
+                    title="Thinking of you",
+                    message=f"{info['user_name']} sent you a silent ping.",
+                    type=NotificationType.SYSTEM,
+                    scheduled_for=datetime.now(timezone.utc),
+                    timezone="UTC"
+                )
+            )
+        except Exception as e:
+            print(f"Failed to send poke notification: {e}")
+
         return True
 
     async def get_interaction_stats(self, user_id: str) -> Optional[Dict[str, Any]]:
@@ -72,18 +92,27 @@ class InteractionService:
             return None
 
         today = self._get_today_str()
-        # The user wants to see how many times their partner has hit the api
-        # So we look for documents where recipient_id == user_id
-        doc = await self.interactions.find_one({
+        
+        # Received pokes (partner -> user)
+        received_doc = await self.interactions.find_one({
             "sender_id": info["partner_id"],
             "recipient_id": user_id,
+            "date": today
+        })
+        
+        # Sent pokes (user -> partner)
+        sent_doc = await self.interactions.find_one({
+            "sender_id": user_id,
+            "recipient_id": info["partner_id"],
             "date": today
         })
 
         return {
             "partner_name": info["partner_name"],
-            "count": doc["count"] if doc else 0,
-            "last_activity": doc["last_activity"] if doc else None
+            "received_count": received_doc["count"] if received_doc else 0,
+            "received_last_activity": received_doc["last_activity"] if received_doc else None,
+            "sent_count": sent_doc["count"] if sent_doc else 0,
+            "sent_last_activity": sent_doc["last_activity"] if sent_doc else None,
         }
 
 interaction_service = InteractionService()

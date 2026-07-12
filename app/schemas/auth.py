@@ -6,7 +6,14 @@ EMAIL_EXAMPLE = "x2@yopmail.com"
 PASSWORD_EXAMPLE = "Secure123"
 
 class UserUpdate(BaseModel):
-    name: str = Field(..., min_length=1, description="User's name")
+    name: Optional[str] = Field(None, min_length=1, description="User's name")
+    gender: Optional[str] = Field(None, description="Gender (Male, Female, Not to say)")
+
+    @model_validator(mode="after")
+    def validate_gender_value(self) -> "UserUpdate":
+        if self.gender is not None and self.gender not in ("Male", "Female", "Not to say"):
+            raise ValueError("Gender must be one of: Male, Female, Not to say")
+        return self
 
 class SignupRequest(BaseModel):
     email: str = Field(..., examples=[EMAIL_EXAMPLE], description="User's email address")

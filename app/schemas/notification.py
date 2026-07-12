@@ -18,6 +18,7 @@ class NotificationType(str, Enum):
     MOOD_CHANGE = "Mood Change"
     RED_FLAG = "Red Flag"
     GREEN_FLAG = "Green Flag"
+    CYCLE_UPDATE = "Cycle Update"
     YELLOW_FLAG = "Yellow Flag"
     VIBE_SYSTEM = "Vibe System"
 

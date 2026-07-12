@@ -7,6 +7,10 @@ from datetime import datetime, timezone, timedelta
 
 from app.core.config import settings
 from app.schemas.watch import WatchSessionCreate, WatchSessionUpdate
+from app.core.websocket import ws_manager
+from app.services.notification import notification_service
+from app.schemas.notification import NotificationCreate, NotificationType
+from app.scheduler import schedule_watch_session
 
 def parse_watch_time(date_str: str, time_str: str, tz_str: str) -> datetime:
     """Parses date and time strings into a UTC datetime object."""
@@ -64,7 +68,30 @@ class WatchService:
         new_doc[f"is_accepted_user_{idx+1}"] = True
 
         result = await self.watch_sessions.insert_one(new_doc)
+        
+        partner_id = next((uid for uid in couple_ids if uid != user_id), None)
+        if partner_id:
+            await ws_manager.broadcast_to_user(partner_id, {"type": "WATCH_UPDATED"})
+            try:
+                await notification_service.schedule_notification(
+                    sender_id=user_id,
+                    payload=NotificationCreate(
+                        recipient_id=partner_id,
+                        title="Watch Together",
+                        message=f"Your partner invited you to watch {payload.show_name}.",
+                        type=NotificationType.SYSTEM,
+                        scheduled_for=datetime.now(timezone.utc),
+                        timezone="UTC"
+                    )
+                )
+            except Exception as e:
+                print(e)
+                
         new_doc["id"] = str(result.inserted_id)
+        
+        # Schedule the push notification
+        schedule_watch_session(new_doc["id"], utc_ts)
+        
         return await self._map_session(new_doc, user_id)
 
     async def accept_session(self, session_id: str, user_id: str) -> Dict[str, Any]:
@@ -80,6 +107,11 @@ class WatchService:
             {"$set": {field: True, "updated_at": datetime.now(timezone.utc)}},
             return_document=True
         )
+        
+        partner_id = next((uid for uid in doc["user_ids"] if uid != user_id), None)
+        if partner_id:
+            await ws_manager.broadcast_to_user(partner_id, {"type": "WATCH_UPDATED"})
+            
         return await self._map_session(result, user_id)
 
     async def get_sessions(self, user_id: str) -> List[Dict[str, Any]]:
@@ -116,6 +148,10 @@ class WatchService:
             {"$set": updates},
             return_document=True
         )
+        
+        if result and "utc_timestamp" in updates:
+            schedule_watch_session(str(result["_id"]), result["utc_timestamp"])
+            
         if result:
             return await self._map_session(result, user_id)
         return None
@@ -147,6 +183,26 @@ class WatchService:
             {"$set": updates},
             return_document=True
         )
+        
+        partner_id = next((uid for uid in doc["user_ids"] if uid != user_id), None)
+        if partner_id:
+            await ws_manager.broadcast_to_user(partner_id, {"type": "WATCH_UPDATED"})
+            if is_ready and doc[f"is_ready_user_{partner_idx+1}"]:
+                try:
+                    await notification_service.schedule_notification(
+                        sender_id=user_id,
+                        payload=NotificationCreate(
+                            recipient_id=partner_id,
+                            title="Ready to Watch!",
+                            message="Your partner is ready. Hit Play now!",
+                            type=NotificationType.SYSTEM,
+                            scheduled_for=datetime.now(timezone.utc),
+                            timezone="UTC"
+                        )
+                    )
+                except Exception as e:
+                    print(e)
+                    
         return await self._map_session(result, user_id)
 
     async def trigger_play(self, session_id: str, user_id: str) -> Dict[str, Any]:
@@ -167,6 +223,11 @@ class WatchService:
             }},
             return_document=True
         )
+        
+        partner_id = next((uid for uid in doc["user_ids"] if uid != user_id), None)
+        if partner_id:
+            await ws_manager.broadcast_to_user(partner_id, {"type": "WATCH_UPDATED"})
+            
         return await self._map_session(result, user_id)
 
     async def _map_session(self, d: Dict[str, Any], user_id: str) -> Dict[str, Any]:

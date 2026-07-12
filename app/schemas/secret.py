@@ -14,6 +14,9 @@ class SecretRead(BaseModel):
     prevent_screenshot: bool = True
     user_name: str
     partner_name: str
+    is_viewed: bool = False
+    status: str = "delivered"
+    rewatch_status: str = "none"
 
 class SecretPaginatedResponse(BaseModel):
     success: bool

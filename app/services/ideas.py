@@ -7,6 +7,9 @@ from datetime import datetime, timezone, timedelta
 
 from app.core.config import settings
 from app.schemas.ideas import IdeaCreate, IdeaUpdate
+from app.core.websocket import ws_manager
+from app.services.notification import notification_service
+from app.schemas.notification import NotificationCreate, NotificationType
 
 def parse_idea_time(time_str: str) -> timedelta:
     """Parses strings like '2 Hours', '1.5 Hours', '30 Minutes' into timedelta."""
@@ -212,7 +215,8 @@ class IdeaService:
             # Meta
             "created_at": now,
             "is_completed": False,
-            "is_expired": False
+            "is_expired": False,
+            "cancel_requested_by": None
         }
         
         # Current user auto-accepts? No, user said "partner also have a option to accept". 
@@ -225,6 +229,26 @@ class IdeaService:
 
         result = await self.idea_progress.insert_one(progress_doc)
         progress_doc["id"] = str(result.inserted_id)
+        
+        # Send notifications if there's a partner
+        if partner_id:
+            u_name, _ = await self._get_names(user_id, partner_id)
+            await ws_manager.broadcast_to_user(partner_id, {"type": "IDEA_UPDATED"})
+            try:
+                await notification_service.schedule_notification(
+                    sender_id=user_id,
+                    payload=NotificationCreate(
+                        recipient_id=partner_id,
+                        title="New Activity Proposed",
+                        message=f"{u_name} proposed a new activity: {idea['name']}",
+                        type=NotificationType.SYSTEM,
+                        scheduled_for=now,
+                        timezone="UTC"
+                    )
+                )
+            except Exception as e:
+                print(f"Failed to send idea notification: {e}")
+
         return await self._map_progress_doc(progress_doc, user_id)
 
     async def accept_idea(self, progress_id: str, user_id: str) -> Dict[str, Any]:
@@ -254,6 +278,31 @@ class IdeaService:
             {"$set": updates},
             return_document=True
         )
+        
+        partner_id = next((uid for uid in doc["user_ids"] if uid != user_id), None)
+        if partner_id:
+            u_name, _ = await self._get_names(user_id, partner_id)
+            await ws_manager.broadcast_to_user(partner_id, {"type": "IDEA_UPDATED"})
+            
+            msg = f"{u_name} accepted your activity: {doc['name']}."
+            if "countdown_start" in updates:
+                msg += " Countdown started!"
+                
+            try:
+                await notification_service.schedule_notification(
+                    sender_id=user_id,
+                    payload=NotificationCreate(
+                        recipient_id=partner_id,
+                        title="Activity Accepted",
+                        message=msg,
+                        type=NotificationType.SYSTEM,
+                        scheduled_for=now,
+                        timezone="UTC"
+                    )
+                )
+            except Exception as e:
+                print(f"Failed to send idea notification: {e}")
+
         return await self._map_progress_doc(result, user_id)
 
     async def mark_idea_done(self, progress_id: str, user_id: str) -> Dict[str, Any]:
@@ -297,6 +346,120 @@ class IdeaService:
             {"$set": updates},
             return_document=True
         )
+
+        partner_id = next((uid for uid in doc["user_ids"] if uid != user_id), None)
+        if partner_id:
+            u_name, _ = await self._get_names(user_id, partner_id)
+            await ws_manager.broadcast_to_user(partner_id, {"type": "IDEA_UPDATED"})
+            
+            try:
+                await notification_service.schedule_notification(
+                    sender_id=user_id,
+                    payload=NotificationCreate(
+                        recipient_id=partner_id,
+                        title="Activity Update",
+                        message=f"{u_name} marked {doc['name']} as done!",
+                        type=NotificationType.SYSTEM,
+                        scheduled_for=now,
+                        timezone="UTC"
+                    )
+                )
+            except Exception as e:
+                print(f"Failed to send idea notification: {e}")
+
+        return await self._map_progress_doc(result, user_id)
+
+    async def request_cancel_idea(self, progress_id: str, user_id: str) -> Dict[str, Any]:
+        doc = await self.idea_progress.find_one({"_id": ObjectId(progress_id)})
+        if not doc:
+            raise ValueError("Idea progress not found.")
+        if user_id not in doc["user_ids"]:
+            raise PermissionError("Not authorized.")
+            
+        updates = {
+            "cancel_requested_by": user_id
+        }
+        
+        result = await self.idea_progress.find_one_and_update(
+            {"_id": ObjectId(progress_id)},
+            {"$set": updates},
+            return_document=True
+        )
+
+        now = datetime.now(timezone.utc)
+        partner_id = next((uid for uid in doc["user_ids"] if uid != user_id), None)
+        if partner_id:
+            u_name, _ = await self._get_names(user_id, partner_id)
+            await ws_manager.broadcast_to_user(partner_id, {"type": "IDEA_UPDATED"})
+            
+            try:
+                await notification_service.schedule_notification(
+                    sender_id=user_id,
+                    payload=NotificationCreate(
+                        recipient_id=partner_id,
+                        title="Cancellation Requested",
+                        message=f"{u_name} requested to cancel: {doc['name']}",
+                        type=NotificationType.SYSTEM,
+                        scheduled_for=now,
+                        timezone="UTC"
+                    )
+                )
+            except Exception as e:
+                print(f"Failed to send idea notification: {e}")
+
+        return await self._map_progress_doc(result, user_id)
+
+    async def respond_cancel_idea(self, progress_id: str, user_id: str, approved: bool) -> Dict[str, Any]:
+        doc = await self.idea_progress.find_one({"_id": ObjectId(progress_id)})
+        if not doc:
+            raise ValueError("Idea progress not found.")
+        if user_id not in doc["user_ids"]:
+            raise PermissionError("Not authorized.")
+        
+        if doc.get("cancel_requested_by") == user_id:
+            raise ValueError("You cannot respond to your own cancellation request.")
+
+        now = datetime.now(timezone.utc)
+        
+        if approved:
+            updates = {
+                "countdown_end": now,
+                "cancel_requested_by": None
+            }
+            title = "Cancellation Approved"
+            msg = f"Your partner approved the cancellation of {doc['name']}."
+        else:
+            updates = {
+                "cancel_requested_by": None
+            }
+            title = "Cancellation Declined"
+            msg = f"Your partner declined to cancel {doc['name']}."
+
+        result = await self.idea_progress.find_one_and_update(
+            {"_id": ObjectId(progress_id)},
+            {"$set": updates},
+            return_document=True
+        )
+
+        partner_id = next((uid for uid in doc["user_ids"] if uid != user_id), None)
+        if partner_id:
+            await ws_manager.broadcast_to_user(partner_id, {"type": "IDEA_UPDATED"})
+            
+            try:
+                await notification_service.schedule_notification(
+                    sender_id=user_id,
+                    payload=NotificationCreate(
+                        recipient_id=partner_id,
+                        title=title,
+                        message=msg,
+                        type=NotificationType.SYSTEM,
+                        scheduled_for=now,
+                        timezone="UTC"
+                    )
+                )
+            except Exception as e:
+                print(f"Failed to send idea notification: {e}")
+
         return await self._map_progress_doc(result, user_id)
 
     # --- Filtered Getters ---
@@ -358,6 +521,10 @@ class IdeaService:
         d["done_at_partner"] = d[f"done_at_user_{partner_idx+1}"] if partner_idx is not None else None
         d["completed_in_user"] = d[f"completed_in_user_{idx+1}"]
         d["completed_in_partner"] = d[f"completed_in_user_{partner_idx+1}"] if partner_idx is not None else None
+
+        # Cancellation state
+        d["has_user_requested_cancel"] = d.get("cancel_requested_by") == user_id
+        d["has_partner_requested_cancel"] = d.get("cancel_requested_by") == partner_id if partner_id else False
 
         # Expired check
         now = datetime.now(timezone.utc)
