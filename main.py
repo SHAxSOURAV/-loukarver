@@ -1,10 +1,12 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 import os
 from app.routers import (
     relationships, auth, checkin, rituals, streak, us, 
-    music, mood, lifecycle, energy, ideas, interactions, watch, secret, dates, thread, milestone, map, notification, vibe_check, vibe_card, play, vibe_dates, vibe_pulse, proposals
+    music, mood, lifecycle, energy, ideas, interactions, watch, secret, dates, thread, milestone, map, notification, vibe_check, vibe_card, play, vibe_dates, vibe_pulse, proposals, legal
 )
 from app.services.streak import streak_system
 from app.services.mood import mood_service
@@ -29,6 +31,15 @@ app = FastAPI(
     version="1.0.0",
 )
 
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    print(f"VALIDATION ERROR on {request.method} {request.url}")
+    print(f"  Details: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
+
 # CORS configuration
 origins = [
     "http://localhost:8081",
@@ -51,6 +62,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from app.tasks.date_watcher import start_date_watcher
+
 @app.on_event("startup")
 async def startup_event():
     await streak_system.init_indexes()
@@ -58,6 +71,7 @@ async def startup_event():
     await idea_service.init_indexes()
     await idea_service.seed_defaults()
     await interaction_service.init_indexes()
+    start_date_watcher()
     await secret_service.init_indexes()
     await date_service.init_indexes()
     await thread_service.init_indexes()
@@ -99,6 +113,7 @@ app.include_router(play.router)
 app.include_router(vibe_dates.router)
 app.include_router(vibe_pulse.router)
 app.include_router(proposals.router)
+app.include_router(legal.router)
 
 # Mount StaticFiles for uploaded files
 os.makedirs("uploads", exist_ok=True)

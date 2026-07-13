@@ -9,6 +9,9 @@ class DateMood(str, Enum):
     ADVENTUROUS = "Adventurous"
     RELAXED = "Relaxed"
     INTIMATE = "Intimate"
+    SPONTANEOUS = "Spontaneous"
+    SOPHISTICATED = "Sophisticated"
+    CREATIVE = "Creative"
 
 class DateVibe(str, Enum):
     OUTDOORSY = "Outdoorsy"
@@ -17,26 +20,31 @@ class DateVibe(str, Enum):
     NIGHTLIFE = "Nightlife"
     COZY = "Cozy"
     ACTIVE = "Active"
+    ARTISTIC = "Artistic"
+    CHILL = "Chill"
+    GLAMOROUS = "Glamorous"
 
 class DateStatus(str, Enum):
     PROPOSED = "Proposed"
     ACCEPTED = "Accepted"
     REJECTED = "Rejected"
     COMPLETED = "Completed"
-    CHANGES_RECOMMENDED = "ChangesRecommended"
-    NEEDS_RECONFIRMATION = "NeedsReconfirmation"
+    CANCEL_REQUESTED = "CancelRequested"
+    CANCELLED = "Cancelled"
 
 class DateReview(BaseModel):
     user_id: str
     user_name: Optional[str] = None
     rating: int = Field(..., ge=1, le=5)
     text: str
+    photos: List[str] = []
 
 class DateReviewRead(BaseModel):
     user_id: str
     user_name: str
     rating: int
     text: str
+    photos: List[str] = []
 
 class DateReviewsResponse(BaseModel):
     success: bool
@@ -72,12 +80,16 @@ class DateResponse(DateBase):
     id: str
     creator_id: str
     partner_id: str
+    proposed_by: str
     status: DateStatus
     utc_timestamp: datetime
     created_at: datetime
     updated_at: datetime
     reviews: List[DateReview] = []
     notification_fired: bool = False
+    deleted_by: List[str] = []
+    photo_delete_requests: List[str] = []
+    completed_by: List[str] = []
 
 class DatePaginatedResponse(BaseModel):
     success: bool
@@ -87,18 +99,15 @@ class DatePaginatedResponse(BaseModel):
     size: int
 
 class DateRespond(BaseModel):
-    action: str = Field(..., description="Action to take: 'accept', 'reject', or 'recommend_changes'")
-    # Fields to update if recommending changes
-    where: Optional[str] = None
-    date: Optional[str] = None
-    time: Optional[str] = None
-    how_we_meet: Optional[str] = None
-    note: Optional[str] = None
-    timezone: Optional[str] = None
+    action: str = Field(..., description="Action to take: 'accept' or 'reject'")
 
 class DateReviewCreate(BaseModel):
     rating: int = Field(..., ge=1, le=5)
     text: str
+    photos: List[str] = []
+
+class PhotoPayload(BaseModel):
+    photo_url: str
 
 class GenericResponse(BaseModel):
     success: bool

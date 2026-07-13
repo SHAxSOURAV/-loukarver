@@ -94,7 +94,52 @@ async def check_phase_changes():
     except Exception as e:
         logger.error(f"Error in check_phase_changes: {e}")
 
+async def check_upcoming_dates():
+    """Check for accepted dates happening in exactly 1 hour and send push notifications."""
+    logger.info("Checking for upcoming dates...")
+    try:
+        from app.services.dates import date_service
+        from datetime import timedelta
+        
+        now = datetime.now(timezone.utc)
+        # Look for dates starting between 55 and 70 minutes from now
+        start_time = now + timedelta(minutes=55)
+        end_time = now + timedelta(minutes=70)
+        
+        cursor = date_service.dates_collection.find({
+            "status": "Accepted",
+            "utc_timestamp": {"$gte": start_time, "$lte": end_time},
+            "notification_fired": {"$ne": True} # Only send once
+        })
+        
+        dates = await cursor.to_list(length=None)
+        for d in dates:
+            # Mark as fired
+            await date_service.dates_collection.update_one(
+                {"_id": d["_id"]},
+                {"$set": {"notification_fired": True}}
+            )
+            
+            # Notify both partners
+            users_to_notify = [d["creator_id"], d["partner_id"]]
+            for uid in users_to_notify:
+                await notification_service.schedule_notification(
+                    sender_id="system",
+                    payload=NotificationCreate(
+                        recipient_id=uid,
+                        type=NotificationType.SYSTEM,
+                        title="Upcoming Date!",
+                        message=f"Your date '{d.get('where', 'Date')}' is starting in 1 hour!",
+                        scheduled_for=datetime.now(timezone.utc),
+                        timezone="UTC"
+                    )
+                )
+    except Exception as e:
+        logger.error(f"Error in check_upcoming_dates: {e}")
+
 def start_scheduler():
     # Run every day at midnight UTC
     scheduler.add_job(check_phase_changes, 'cron', hour=0, minute=0)
+    # Run every 15 minutes to check for upcoming dates
+    scheduler.add_job(check_upcoming_dates, 'cron', minute='*/15')
     scheduler.start()
