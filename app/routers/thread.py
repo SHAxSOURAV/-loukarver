@@ -6,7 +6,8 @@ from app.schemas.thread import (
     ThreadCategoryResponse, LetterCreate, PhotoCreate, PromptAskCreate, PromptReplyUpdate,
     AppreciationCreate, CheckInThreadCreate, ThreadMessageResponse,
     PromptType, PromptQuestion, PromptQuestionCreate, GenericResponse,
-    LetterUpdate, PhotoUpdate, VoiceUpdate, PromptAskUpdate, AppreciationUpdate, CheckInThreadUpdate
+    LetterUpdate, PhotoUpdate, VoiceUpdate, PromptAskUpdate, AppreciationUpdate, CheckInThreadUpdate,
+    VoiceBase64Create, PhotoBase64Create
 )
 from app.services.thread import thread_service
 
@@ -82,6 +83,14 @@ async def patch_voice(
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
 
+@router.post("/voice_base64", response_model=ThreadMessageResponse)
+async def post_voice_base64(payload: VoiceBase64Create, current_user: dict = Depends(get_current_user)):
+    """Post a voice message (base64 JSON)."""
+    try:
+        return await thread_service.post_voice_base64(current_user["id"], payload)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
 @router.post("/photo", response_model=ThreadMessageResponse)
 async def post_photo(
     file: UploadFile = File(...),
@@ -108,6 +117,14 @@ async def patch_photo(
         updates = {}
         if caption is not None: updates["caption"] = caption
         return await thread_service.update_message(current_user["id"], message_id, updates, file=file, timezone_str=timezone)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+@router.post("/photo_base64", response_model=ThreadMessageResponse)
+async def post_photo_base64(payload: PhotoBase64Create, current_user: dict = Depends(get_current_user)):
+    """Post a photo message (base64 JSON)."""
+    try:
+        return await thread_service.post_photo_base64(current_user["id"], payload)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
 

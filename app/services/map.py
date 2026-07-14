@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.schemas.map import (
     PlaceCreate, PlaceUpdate, PlaceCategory, MomentCreate, MomentType
 )
+from pymongo import ReturnDocument
 
 class MapService:
     def __init__(self) -> None:
@@ -100,6 +101,11 @@ class MapService:
 
         result = await self.places_collection.insert_one(new_doc)
         new_doc["id"] = str(result.inserted_id)
+
+        if partner_id:
+            from app.core.websocket import ws_manager
+            await ws_manager.broadcast_to_user(partner_id, {"type": "MAP_UPDATED"})
+
         return await self._map_place(new_doc, payload.timezone, user_id)
 
     async def get_places(self, user_id: str, category: Optional[PlaceCategory] = None, search: Optional[str] = None, page: int = 1, size: int = 20, user_timezone: str = "UTC") -> Tuple[List[Dict[str, Any]], int]:
@@ -135,7 +141,10 @@ class MapService:
         return None
 
     async def update_place(self, place_id: str, user_id: str, payload: PlaceUpdate) -> Dict[str, Any]:
-        doc = await self.places_collection.find_one({"_id": ObjectId(place_id), "creator_id": user_id})
+        doc = await self.places_collection.find_one({
+            "_id": ObjectId(place_id),
+            "$or": [{"creator_id": user_id}, {"partner_id": user_id}]
+        })
         if not doc:
             raise ValueError("Place not found or permission denied.")
 
@@ -155,13 +164,118 @@ class MapService:
         result = await self.places_collection.find_one_and_update(
             {"_id": ObjectId(place_id)},
             {"$set": updates},
-            return_document=True
+            return_document=ReturnDocument.AFTER
         )
+
+        partner_id = await self._get_partner_id(user_id)
+        if partner_id:
+            from app.core.websocket import ws_manager
+            await ws_manager.broadcast_to_user(partner_id, {"type": "MAP_UPDATED"})
+
         return await self._map_place(result, payload.timezone, user_id)
 
     async def delete_place(self, place_id: str, user_id: str) -> bool:
-        result = await self.places_collection.delete_one({"_id": ObjectId(place_id), "creator_id": user_id})
-        return result.deleted_count > 0
+        doc = await self.places_collection.find_one({
+            "_id": ObjectId(place_id),
+            "$or": [{"creator_id": user_id}, {"partner_id": user_id}]
+        })
+        if not doc:
+            return False
+            
+        result = await self.places_collection.delete_one({"_id": ObjectId(place_id)})
+        
+        if result.deleted_count > 0:
+            partner_id = await self._get_partner_id(user_id)
+            if partner_id:
+                from app.core.websocket import ws_manager
+                await ws_manager.broadcast_to_user(partner_id, {"type": "MAP_UPDATED"})
+            return True
+        return False
+
+    async def request_delete_place(self, place_id: str, user_id: str, user_timezone: str = "UTC") -> Dict[str, Any]:
+        doc = await self.places_collection.find_one({
+            "_id": ObjectId(place_id),
+            "$or": [{"creator_id": user_id}, {"partner_id": user_id}]
+        })
+        if not doc:
+            raise ValueError("Place not found or permission denied.")
+
+        partner_id = await self._get_partner_id(user_id)
+        
+        # Check if partner has contributed any moments
+        has_partner_contribution = False
+        if partner_id:
+            for m in doc.get("moments", []):
+                if str(m.get("creator_id")) == str(partner_id):
+                    has_partner_contribution = True
+                    break
+
+        if not has_partner_contribution:
+            # Delete immediately
+            await self.places_collection.delete_one({"_id": ObjectId(place_id)})
+            if partner_id:
+                from app.core.websocket import ws_manager
+                await ws_manager.broadcast_to_user(partner_id, {"type": "MAP_UPDATED"})
+            return {"id": place_id, "deleted": True}
+
+        # Otherwise, initiate approval request
+        names = await self._get_names(user_id, partner_id or "")
+        user_name = names.get(user_id, "User")
+        
+        deletion_request = {
+            "requested_by": user_id,
+            "requested_by_name": user_name,
+            "created_at": datetime.now(timezone.utc)
+        }
+
+        result = await self.places_collection.find_one_and_update(
+            {"_id": ObjectId(place_id)},
+            {"$set": {"deletion_request": deletion_request}},
+            return_document=ReturnDocument.AFTER
+        )
+
+        if partner_id:
+            from app.core.websocket import ws_manager
+            await ws_manager.broadcast_to_user(partner_id, {"type": "MAP_UPDATED"})
+
+        return await self._map_place(result, user_timezone, user_id)
+
+    async def approve_delete_place(self, place_id: str, user_id: str) -> bool:
+        doc = await self.places_collection.find_one({
+            "_id": ObjectId(place_id),
+            "$or": [{"creator_id": user_id}, {"partner_id": user_id}]
+        })
+        if not doc or not doc.get("deletion_request"):
+            return False
+
+        await self.places_collection.delete_one({"_id": ObjectId(place_id)})
+        
+        partner_id = await self._get_partner_id(user_id)
+        if partner_id:
+            from app.core.websocket import ws_manager
+            await ws_manager.broadcast_to_user(partner_id, {"type": "MAP_UPDATED"})
+        return True
+
+    async def reject_delete_place(self, place_id: str, user_id: str, user_timezone: str = "UTC") -> Dict[str, Any]:
+        doc = await self.places_collection.find_one({
+            "_id": ObjectId(place_id),
+            "$or": [{"creator_id": user_id}, {"partner_id": user_id}]
+        })
+        if not doc or not doc.get("deletion_request"):
+            raise ValueError("No pending deletion request found.")
+
+        result = await self.places_collection.find_one_and_update(
+            {"_id": ObjectId(place_id)},
+            {"$unset": {"deletion_request": ""}},
+            return_document=ReturnDocument.AFTER
+        )
+
+        partner_id = await self._get_partner_id(user_id)
+        if partner_id:
+            from app.core.websocket import ws_manager
+            await ws_manager.broadcast_to_user(partner_id, {"type": "MAP_UPDATED"})
+
+        return await self._map_place(result, user_timezone, user_id)
 
     # --- Moment Management ---
 
@@ -194,9 +308,16 @@ class MapService:
         result = await self.places_collection.find_one_and_update(
             {"_id": ObjectId(place_id)},
             {"$push": {"moments": new_moment}, "$set": {"updated_at": datetime.now(timezone.utc)}},
-            return_document=True
+            return_document=ReturnDocument.AFTER
         )
+
+        partner_id = await self._get_partner_id(user_id)
+        if partner_id:
+            from app.core.websocket import ws_manager
+            await ws_manager.broadcast_to_user(partner_id, {"type": "MAP_UPDATED"})
+
         return await self._map_place(result, payload.timezone, user_id)
+
 
     # --- Stats & Overview ---
 
@@ -304,6 +425,14 @@ class MapService:
             if isinstance(dt, datetime):
                 if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
                 d[field] = dt.astimezone(tz)
+
+        # Map deletion_request
+        if "deletion_request" in d and d["deletion_request"]:
+            req = d["deletion_request"]
+            dt = req.get("created_at")
+            if isinstance(dt, datetime):
+                if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                req["created_at"] = dt.astimezone(tz)
 
         # Map moments
         for m in d.get("moments", []):

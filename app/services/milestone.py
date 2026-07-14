@@ -54,6 +54,11 @@ class MilestoneService:
 
         result = await self.milestones_collection.insert_one(new_doc)
         new_doc["id"] = str(result.inserted_id)
+
+        # Notify partner
+        from app.core.websocket import ws_manager
+        await ws_manager.broadcast_to_user(partner_id, {"type": "MILESTONE_UPDATED"})
+
         return await self._map_milestone(new_doc, user_timezone=payload.timezone)
 
     async def get_milestones(self, user_id: str, page: int = 1, size: int = 20, pin: Optional[str] = None, user_timezone: str = "UTC") -> Tuple[List[Dict[str, Any]], int]:
@@ -79,14 +84,14 @@ class MilestoneService:
             return await self._map_milestone(doc, pin, user_timezone)
         return None
 
-    async def update_milestone(self, milestone_id: str, user_id: str, payload: MilestoneUpdate) -> Dict[str, Any]:
-        doc = await self.milestones_collection.find_one({"_id": ObjectId(milestone_id), "creator_id": user_id})
+    async def update_milestone(self, milestone_id: str, user_id: str, payload: MilestoneUpdate, pin: Optional[str] = None) -> Dict[str, Any]:
+        doc = await self.milestones_collection.find_one({"_id": ObjectId(milestone_id), "$or": [{"creator_id": user_id}, {"partner_id": user_id}]})
         if not doc:
-            raise ValueError("Milestone not found or you are not the creator.")
+            raise ValueError("Milestone not found or you do not have permission.")
 
         updates = payload.model_dump(exclude_unset=True)
         if not updates:
-            return await self._map_milestone(doc, user_timezone=payload.timezone)
+            return await self._map_milestone(doc, pin or payload.pin, user_timezone=payload.timezone)
 
         updates["updated_at"] = datetime.now(timezone.utc)
         
@@ -95,25 +100,38 @@ class MilestoneService:
             {"$set": updates},
             return_document=True
         )
-        return await self._map_milestone(result, user_timezone=payload.timezone)
+
+        partner_id = await self._get_partner_id(user_id)
+        if partner_id:
+            from app.core.websocket import ws_manager
+            await ws_manager.broadcast_to_user(partner_id, {"type": "MILESTONE_UPDATED"})
+
+        return await self._map_milestone(result, pin or payload.pin, user_timezone=payload.timezone)
 
     async def delete_milestone(self, milestone_id: str, user_id: str, pin: Optional[str] = None) -> bool:
-        doc = await self.milestones_collection.find_one({"_id": ObjectId(milestone_id), "creator_id": user_id})
+        doc = await self.milestones_collection.find_one({"_id": ObjectId(milestone_id), "$or": [{"creator_id": user_id}, {"partner_id": user_id}]})
         if not doc:
             return False
 
         if doc.get("is_private") and doc.get("pin") != pin:
             raise ValueError("Incorrect PIN for private milestone.")
 
-        result = await self.milestones_collection.delete_one({"_id": ObjectId(milestone_id), "creator_id": user_id})
-        return result.deleted_count > 0
+        result = await self.milestones_collection.delete_one({"_id": ObjectId(milestone_id)})
+        
+        if result.deleted_count > 0:
+            partner_id = await self._get_partner_id(user_id)
+            if partner_id:
+                from app.core.websocket import ws_manager
+                await ws_manager.broadcast_to_user(partner_id, {"type": "MILESTONE_UPDATED"})
+            return True
+        return False
 
     # --- Step Management ---
 
-    async def add_step(self, milestone_id: str, user_id: str, step_payload: MilestoneStepCreate) -> Dict[str, Any]:
-        doc = await self.milestones_collection.find_one({"_id": ObjectId(milestone_id), "creator_id": user_id})
+    async def add_step(self, milestone_id: str, user_id: str, step_payload: MilestoneStepCreate, pin: Optional[str] = None) -> Dict[str, Any]:
+        doc = await self.milestones_collection.find_one({"_id": ObjectId(milestone_id), "$or": [{"creator_id": user_id}, {"partner_id": user_id}]})
         if not doc:
-            raise ValueError("Milestone not found or you are not the creator.")
+            raise ValueError("Milestone not found or you do not have permission.")
 
         new_step = {
             "id": str(uuid.uuid4()),
@@ -126,12 +144,18 @@ class MilestoneService:
             {"$push": {"steps": new_step}, "$set": {"updated_at": datetime.now(timezone.utc)}},
             return_document=True
         )
-        return await self._map_milestone(result, user_timezone=step_payload.timezone)
 
-    async def update_step(self, milestone_id: str, step_id: str, user_id: str, step_payload: MilestoneStepUpdate) -> Dict[str, Any]:
-        doc = await self.milestones_collection.find_one({"_id": ObjectId(milestone_id), "creator_id": user_id})
+        partner_id = await self._get_partner_id(user_id)
+        if partner_id:
+            from app.core.websocket import ws_manager
+            await ws_manager.broadcast_to_user(partner_id, {"type": "MILESTONE_UPDATED"})
+
+        return await self._map_milestone(result, pin, user_timezone=step_payload.timezone)
+
+    async def update_step(self, milestone_id: str, step_id: str, user_id: str, step_payload: MilestoneStepUpdate, pin: Optional[str] = None) -> Dict[str, Any]:
+        doc = await self.milestones_collection.find_one({"_id": ObjectId(milestone_id), "$or": [{"creator_id": user_id}, {"partner_id": user_id}]})
         if not doc:
-            raise ValueError("Milestone not found or you are not the creator.")
+            raise ValueError("Milestone not found or you do not have permission.")
 
         updates = {}
         if step_payload.text is not None:
@@ -143,19 +167,25 @@ class MilestoneService:
                 updates["steps.$.completed_at"] = datetime.now(timezone.utc)
 
         if not updates:
-            return self._map_milestone(doc, user_timezone=step_payload.timezone)
+            return await self._map_milestone(doc, pin, user_timezone=step_payload.timezone)
 
         result = await self.milestones_collection.find_one_and_update(
             {"_id": ObjectId(milestone_id), "steps.id": step_id},
             {"$set": updates},
             return_document=True
         )
-        return await self._map_milestone(result, user_timezone=step_payload.timezone)
+
+        partner_id = await self._get_partner_id(user_id)
+        if partner_id:
+            from app.core.websocket import ws_manager
+            await ws_manager.broadcast_to_user(partner_id, {"type": "MILESTONE_UPDATED"})
+
+        return await self._map_milestone(result, pin, user_timezone=step_payload.timezone)
 
     async def delete_step(self, milestone_id: str, step_id: str, user_id: str, pin: Optional[str] = None, user_timezone: str = "UTC") -> Dict[str, Any]:
-        doc = await self.milestones_collection.find_one({"_id": ObjectId(milestone_id), "creator_id": user_id})
+        doc = await self.milestones_collection.find_one({"_id": ObjectId(milestone_id), "$or": [{"creator_id": user_id}, {"partner_id": user_id}]})
         if not doc:
-            raise ValueError("Milestone not found or you are not the creator.")
+            raise ValueError("Milestone not found or you do not have permission.")
 
         if doc.get("is_private") and doc.get("pin") != pin:
             raise ValueError("Incorrect PIN for private milestone.")
@@ -165,9 +195,15 @@ class MilestoneService:
             {"$pull": {"steps": {"id": step_id}}, "$set": {"updated_at": datetime.now(timezone.utc)}},
             return_document=True
         )
-        return await self._map_milestone(result, user_timezone=user_timezone)
 
-    async def toggle_step_completion(self, milestone_id: str, step_id: str, user_id: str, user_timezone: str = "UTC") -> Dict[str, Any]:
+        partner_id = await self._get_partner_id(user_id)
+        if partner_id:
+            from app.core.websocket import ws_manager
+            await ws_manager.broadcast_to_user(partner_id, {"type": "MILESTONE_UPDATED"})
+
+        return await self._map_milestone(result, pin, user_timezone=user_timezone)
+
+    async def toggle_step_completion(self, milestone_id: str, step_id: str, user_id: str, pin: Optional[str] = None, user_timezone: str = "UTC") -> Dict[str, Any]:
         doc = await self.milestones_collection.find_one({
             "_id": ObjectId(milestone_id),
             "$or": [{"creator_id": user_id}, {"partner_id": user_id}]
@@ -195,7 +231,14 @@ class MilestoneService:
             {"$set": updates},
             return_document=True
         )
-        return await self._map_milestone(result, user_timezone=user_timezone)
+
+        # Notify the other user (either partner_id or creator_id)
+        other_id = doc.get("partner_id") if str(doc.get("creator_id")) == user_id else doc.get("creator_id")
+        if other_id:
+            from app.core.websocket import ws_manager
+            await ws_manager.broadcast_to_user(str(other_id), {"type": "MILESTONE_UPDATED"})
+
+        return await self._map_milestone(result, pin, user_timezone=user_timezone)
 
     async def _get_names(self, user_id: str, partner_id: str) -> Dict[str, str]:
         names = {user_id: "User", partner_id: "Partner"}

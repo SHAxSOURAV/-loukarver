@@ -6,7 +6,8 @@ import uuid
 from app.routers.auth import get_current_user
 from app.schemas.dates import (
     DateCreate, DateUpdate, DateResponse, DatePaginatedResponse,
-    DateRespond, DateReviewCreate, GenericResponse, DateReviewsResponse
+    DateRespond, DateReviewCreate, GenericResponse, DateReviewsResponse,
+    PhotoPayload
 )
 from app.services.dates import date_service
 

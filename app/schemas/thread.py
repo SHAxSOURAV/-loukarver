@@ -42,6 +42,17 @@ class VoiceCreate(ThreadMessageBase):
 class PhotoCreate(ThreadMessageBase):
     caption: str
 
+class VoiceBase64Create(ThreadMessageBase):
+    file_base64: str
+    filename: str
+    content_type: str
+
+class PhotoBase64Create(ThreadMessageBase):
+    file_base64: str
+    filename: str
+    content_type: str
+    caption: str
+
 class PromptAskCreate(ThreadMessageBase):
     prompt_type: PromptType
     question_text: str

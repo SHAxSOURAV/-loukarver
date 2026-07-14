@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File, Form
-from typing import List, Optional
-
+from typing import List, Optional, Union
 from app.routers.auth import get_current_user
 from app.schemas.map import (
     PlaceCreate, PlaceUpdate, PlaceResponse, PlacePaginatedResponse,
@@ -106,3 +105,45 @@ async def get_map_overview(
 ):
     """Get data for map visualization, including places and calculated routes."""
     return await map_service.get_overview(current_user["id"], timezone)
+
+@router.post("/place/{place_id}/request-delete", response_model=Union[PlaceResponse, GenericResponse])
+async def request_delete_place(
+    place_id: str,
+    timezone: str = Query("UTC"),
+    current_user: dict = Depends(get_current_user)
+):
+    """Request to delete a place. Deletes immediately if partner has not contributed."""
+    try:
+        res = await map_service.request_delete_place(place_id, current_user["id"], timezone)
+        if res.get("deleted"):
+            return GenericResponse(success=True, message="Place deleted immediately.")
+        return res
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/place/{place_id}/approve-delete", response_model=GenericResponse)
+async def approve_delete_place(place_id: str, current_user: dict = Depends(get_current_user)):
+    """Approve deletion of a place requested by your partner."""
+    try:
+        success = await map_service.approve_delete_place(place_id, current_user["id"])
+        if not success:
+            raise HTTPException(status_code=400, detail="Failed to approve deletion or no pending request.")
+        return GenericResponse(success=True, message="Place deleted successfully.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/place/{place_id}/reject-delete", response_model=PlaceResponse)
+async def reject_delete_place(
+    place_id: str,
+    timezone: str = Query("UTC"),
+    current_user: dict = Depends(get_current_user)
+):
+    """Reject deletion of a place requested by your partner."""
+    try:
+        return await map_service.reject_delete_place(place_id, current_user["id"], timezone)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

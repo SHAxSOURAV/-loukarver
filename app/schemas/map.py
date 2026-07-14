@@ -71,15 +71,26 @@ class PlaceUpdate(BaseModel):
     visit_date: Optional[str] = None
     timezone: str = "UTC"
 
+class DeletionRequest(BaseModel):
+    requested_by: str
+    requested_by_name: str
+    created_at: datetime
+
 class PlaceResponse(BaseModel):
     id: str
     creator_id: str
     creator_name: str
     partner_id: str
+    city: str
+    country: str
+    category: PlaceCategory
+    description: Optional[str] = None
+    visit_date: Optional[str] = None
     lat: float
     lng: float
 
     moments: List[Moment] = []
+    deletion_request: Optional[DeletionRequest] = None
     created_at: datetime
     updated_at: datetime
 

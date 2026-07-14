@@ -21,6 +21,7 @@ class NotificationType(str, Enum):
     CYCLE_UPDATE = "Cycle Update"
     YELLOW_FLAG = "Yellow Flag"
     VIBE_SYSTEM = "Vibe System"
+    THREAD_MESSAGE = "Thread Message"
 
 class NotificationStatus(str, Enum):
     SCHEDULED = "Scheduled"
