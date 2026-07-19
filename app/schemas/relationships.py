@@ -107,7 +107,7 @@ class RelationshipResponseData(BaseModel):
 class RelationshipResponse(BaseModel):
     success: bool
     message: str
-    data: RelationshipResponseData
+    data: Optional[RelationshipResponseData] = None
 
 class AlignRequest(BaseModel):
     secret_key: str = Field(

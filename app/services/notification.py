@@ -1,6 +1,8 @@
 import zoneinfo
 from typing import Dict, Any, List, Optional, Tuple
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from datetime import datetime, timezone
 
@@ -11,8 +13,8 @@ from app.schemas.notification import (
 
 class NotificationService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.notifications_collection = self.db["notifications"]
         self.users = self.db["users"]
 

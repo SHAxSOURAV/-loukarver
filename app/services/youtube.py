@@ -1,6 +1,8 @@
 import httpx
 from typing import Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from datetime import datetime, timedelta
 import urllib.parse
@@ -9,8 +11,8 @@ from app.core.config import settings
 
 class YouTubeMusicService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.user_links = self.db["user_music_links"]
         self.shared_tracks = self.db["shared_tracks"]
         self.users = self.db["users"]

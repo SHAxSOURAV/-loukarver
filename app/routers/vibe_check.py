@@ -14,6 +14,7 @@ from app.schemas.vibe_check import (
 )
 from app.services.vibe_check import vibe_check_service
 from app.services.auth import verify_password
+from app.services.s3_utils import s3_service
 
 router = APIRouter(prefix="/vibecheck", tags=["VibeCheck"])
 
@@ -222,17 +223,8 @@ async def upload_vibecheck_profile_picture(
 ):
     """Upload or update profile picture for VibeCheck."""
     try:
-        os.makedirs("uploads/vibecheck", exist_ok=True)
-        ext = os.path.splitext(file.filename)[1] if file.filename else ".jpg"
-        if not ext:
-            ext = ".jpg"
-        filename = f"{uuid.uuid4().hex}{ext}"
-        file_path = os.path.join("uploads", "vibecheck", filename)
-        
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        return await vibe_check_service.update_profile_picture(current_user["id"], file_path)
+        file_url = await s3_service.upload_file(file, folder="vibecheck")
+        return await vibe_check_service.update_profile_picture(current_user["id"], file_url)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:

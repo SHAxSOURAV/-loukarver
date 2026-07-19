@@ -1,5 +1,7 @@
 from typing import Dict, Any, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from app.core.config import settings
 from app.schemas.checkin import CheckInCreate, CheckInUpdate
@@ -11,8 +13,8 @@ from datetime import datetime, timezone
 
 class CheckInService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.users_collection = self.db["users"]
         self.checkins_collection = self.db["check_ins"]
 

@@ -5,11 +5,14 @@ import httpx
 import asyncio
 from typing import Dict, Any, List, Optional, Tuple
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from datetime import datetime, timezone
 from fastapi import UploadFile
 
 from app.core.config import settings
+from app.services.s3_utils import s3_service
 from app.schemas.map import (
     PlaceCreate, PlaceUpdate, PlaceCategory, MomentCreate, MomentType
 )
@@ -17,14 +20,10 @@ from pymongo import ReturnDocument
 
 class MapService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.places_collection = self.db["map_places"]
         self.users = self.db["users"]
-        self.storage_path = "uploads"
-        
-        if not os.path.exists(self.storage_path):
-            os.makedirs(self.storage_path)
 
     async def init_indexes(self):
         await self.places_collection.create_index([("creator_id", 1), ("partner_id", 1)])
@@ -289,12 +288,7 @@ class MapService:
 
         content = payload.content
         if payload.type == MomentType.PHOTO and file:
-            ext = os.path.splitext(file.filename)[1]
-            unique_filename = f"{uuid.uuid4().hex}{ext}"
-            local_path = os.path.join(self.storage_path, unique_filename)
-            with open(local_path, "wb") as f:
-                f.write(await file.read())
-            content = f"/uploads/{unique_filename}"
+            content = await s3_service.upload_file(file, folder="map_moments")
         
         new_moment = {
             "id": str(uuid.uuid4()),

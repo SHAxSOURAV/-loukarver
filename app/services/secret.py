@@ -4,6 +4,8 @@ import uuid
 import shutil
 from typing import Dict, Any, List, Optional, Tuple
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from datetime import datetime, timezone, timedelta
 import zoneinfo
@@ -11,6 +13,7 @@ from fastapi import UploadFile
 
 from app.core.config import settings
 from app.core.websocket import ws_manager
+from app.services.s3_utils import s3_service
 from app.services.notification import notification_service
 import asyncio
 
@@ -37,14 +40,10 @@ def parse_duration(duration_str: str) -> timedelta:
 
 class SecretService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.secrets_collection = self.db["secrets"]
         self.users = self.db["users"]
-        self.storage_path = "secrets_vault"
-        
-        if not os.path.exists(self.storage_path):
-            os.makedirs(self.storage_path)
 
     async def init_indexes(self):
         # Auto-delete secrets at the exact expires_at timestamp
@@ -76,25 +75,17 @@ class SecretService:
         now = datetime.now(timezone.utc)
         expires_at = now + duration
 
-        # Generate unique filename
-        file_ext = os.path.splitext(file.filename)[1]
-        unique_filename = f"{uuid.uuid4()}{file_ext}"
-        full_path = os.path.join(self.storage_path, unique_filename)
-
-        # Save file to disk
-        with open(full_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        # Save file to S3
+        file_url = await s3_service.upload_file(file, folder="secrets")
 
         # Create database entry
-        is_video = file.content_type and file.content_type.startswith("video/")
         new_doc = {
             "sender_id": sender_id,
             "recipient_id": partner_id,
             "filename": file.filename,
-            "stored_filename": unique_filename,
+            "stored_filename": file_url,
             "file_type": file.content_type,
-            "is_video": is_video,
-            "size": os.path.getsize(full_path),
+            "size": file.size,
             "prevent_screenshot": prevent_screenshot,
             "delete_after": delete_after,
             "created_at": now,
@@ -145,8 +136,6 @@ class SecretService:
             d["partner_name"] = p_name
             if "prevent_screenshot" not in d:
                 d["prevent_screenshot"] = True
-            if "is_video" not in d:
-                d["is_video"] = False
             
             # Timezone conversion
             for field in ["created_at", "expires_at"]:
@@ -189,8 +178,6 @@ class SecretService:
             d["partner_name"] = p_name
             if "prevent_screenshot" not in d:
                 d["prevent_screenshot"] = True
-            if "is_video" not in d:
-                d["is_video"] = False
 
             # Timezone conversion
             for field in ["created_at", "expires_at"]:
@@ -321,9 +308,16 @@ class SecretService:
         if doc.get("is_viewed"):
             raise ValueError("Cannot revoke a secret that has already been viewed.")
             
-        # Physically delete the file
-        file_path = self.get_full_path(doc["stored_filename"])
-        self.delete_file(file_path)
+        # Delete file
+        try:
+            if doc["stored_filename"] and "amazonaws.com" in doc["stored_filename"]:
+                await s3_service.delete_file(doc["stored_filename"])
+            else:
+                file_path = self.get_full_path(doc["stored_filename"])
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+        except Exception:
+            pass
         
         # Delete from DB
         await self.secrets_collection.delete_one({"_id": ObjectId(secret_id)})

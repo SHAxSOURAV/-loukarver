@@ -3,6 +3,8 @@ import string
 import os
 from typing import Dict, Any, Optional, List
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from datetime import datetime, timezone, timedelta
 from app.core.config import settings
@@ -10,8 +12,8 @@ from app.schemas.vibe_check import VibeCheckProfileCreate, VibeInviteResponse, V
 
 class VibeCheckService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.profiles = self.db["vibe_check_profiles"]
         self.connections = self.db["vibe_check_connections"]
         self.requests = self.db["vibe_check_requests"]
@@ -164,19 +166,26 @@ class VibeCheckService:
         )
         return await self.get_profile(user_id)
 
-    async def update_profile_picture(self, user_id: str, file_path: str) -> Dict[str, Any]:
+    async def update_profile_picture(self, user_id: str, file_url: str) -> Dict[str, Any]:
         """Update the user's VibeCheck profile picture."""
-        # Convert local path to an accessible URL path (assuming StaticFiles mounted at /uploads)
-        url_path = f"/{file_path.replace(os.sep, '/')}"
-        
         await self.profiles.update_one(
             {"user_id": user_id},
-            {"$set": {"profile_picture": url_path, "updated_at": datetime.now(timezone.utc)}}
+            {"$set": {"profile_picture": file_url, "updated_at": datetime.now(timezone.utc)}}
         )
         return await self.get_profile(user_id)
 
     async def delete_profile_picture(self, user_id: str) -> Dict[str, Any]:
         """Remove the user's VibeCheck profile picture."""
+        existing = await self.profiles.find_one({"user_id": user_id})
+        if existing and existing.get("profile_picture"):
+            old_path = existing.get("profile_picture")
+            from app.services.s3_utils import s3_service
+            import os
+            if "amazonaws.com" in old_path:
+                await s3_service.delete_file(old_path)
+            elif os.path.exists(old_path):
+                os.remove(old_path)
+                
         await self.profiles.update_one(
             {"user_id": user_id},
             {"$set": {"profile_picture": None, "updated_at": datetime.now(timezone.utc)}}
@@ -744,7 +753,7 @@ class VibeCheckService:
         )
         return await self.get_profile(user_id)
 
-    async def update_profile_picture(self, user_id: str, file_path: str) -> Dict[str, Any]:
+    async def update_profile_picture(self, user_id: str, file_url: str) -> Dict[str, Any]:
         """Save or update profile picture path for the user."""
         existing = await self.profiles.find_one({"user_id": user_id})
         if not existing:
@@ -753,13 +762,16 @@ class VibeCheckService:
         # Delete old file if exists
         old_path = existing.get("profile_picture")
         if old_path:
+            from app.services.s3_utils import s3_service
             import os
-            if os.path.exists(old_path):
+            if "amazonaws.com" in old_path:
+                await s3_service.delete_file(old_path)
+            elif os.path.exists(old_path):
                 os.remove(old_path)
         
         await self.profiles.update_one(
             {"user_id": user_id},
-            {"$set": {"profile_picture": file_path, "updated_at": datetime.now(timezone.utc)}}
+            {"$set": {"profile_picture": file_url, "updated_at": datetime.now(timezone.utc)}}
         )
         return await self.get_profile(user_id)
 

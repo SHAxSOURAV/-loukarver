@@ -22,6 +22,16 @@ class NotificationType(str, Enum):
     YELLOW_FLAG = "Yellow Flag"
     VIBE_SYSTEM = "Vibe System"
     THREAD_MESSAGE = "Thread Message"
+    BROWSE_IDEAS = "Browse Ideas"
+    THINKING_OF_YOU = "Thinking of You"
+    WATCH_TOGETHER = "Watch Together"
+    CONFIDENTIAL_MESSAGE = "Confidential Message"
+    DATE_ADDED = "Date Added"
+    MILESTONE_STEP = "Milestone Step"
+    US_SECTION_UPDATE = "Us Section Update"
+    MAP_CREATE = "Map Create"
+    MAP_DELETE = "Map Delete"
+    STATE_UPDATE = "State Update"
 
 class NotificationStatus(str, Enum):
     SCHEDULED = "Scheduled"

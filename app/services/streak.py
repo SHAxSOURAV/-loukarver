@@ -1,12 +1,15 @@
 from typing import Dict, Any, List, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import os
 import uuid
 from fastapi import UploadFile
 from pymongo.errors import DuplicateKeyError
 from app.core.config import settings
+from app.services.s3_utils import s3_service
 from app.services.streak_algo import get_local_now, calculate_streak, is_at_risk
 from app.schemas.ritual import RitualCompleteRequest
 from app.services.notification import notification_service
@@ -24,8 +27,8 @@ def get_time_name(hour: int) -> str:
 
 class StreakSystem:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.users_collection = self.db["users"]
         self.rituals_collection = self.db["ritual_completions"]
 
@@ -56,16 +59,7 @@ class StreakSystem:
         # Handle file upload if provided
         file_path = None
         if file and file.filename:
-            os.makedirs("uploads", exist_ok=True)
-            ext = os.path.splitext(file.filename)[1]
-            unique_filename = f"{uuid.uuid4().hex}{ext}"
-            local_path = os.path.join("uploads", unique_filename)
-            
-            content = await file.read()
-            with open(local_path, "wb") as f:
-                f.write(content)
-                
-            file_path = f"/uploads/{unique_filename}"
+            file_path = await s3_service.upload_file(file, folder="rituals")
         
         new_doc = {
             "user_id": user_id,
@@ -328,7 +322,7 @@ class StreakSystem:
             partner_id = user["partner"]["user_id"]
             
         if not partner_id:
-            return {"data": [], "page": page, "limit": limit, "total": 0}
+            return {"data": [], "page": page, "limit": limit, "total": 0, "streak": 0}
             
         skip = (page - 1) * limit
         # Exclude rituals that are logically deleted by the requesting user
@@ -497,20 +491,14 @@ class StreakSystem:
         elif file and file.filename:
             # Delete old file if exists
             if file_path:
-                local_path = file_path.lstrip("/")
-                if os.path.exists(local_path):
-                    os.remove(local_path)
+                if "amazonaws.com" in file_path:
+                    await s3_service.delete_file(file_path)
+                else:
+                    local_path = file_path.lstrip("/")
+                    if os.path.exists(local_path):
+                        os.remove(local_path)
             
-            os.makedirs("uploads", exist_ok=True)
-            ext = os.path.splitext(file.filename)[1]
-            unique_filename = f"{uuid.uuid4().hex}{ext}"
-            local_path = os.path.join("uploads", unique_filename)
-            
-            content = await file.read()
-            with open(local_path, "wb") as f:
-                f.write(content)
-                
-            file_path = f"/uploads/{unique_filename}"
+            file_path = await s3_service.upload_file(file, folder="rituals")
             updates["file_path"] = file_path
 
         if updates:

@@ -97,24 +97,28 @@ async def view_secret(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Open and view a secret file. 
+    Open and view a secret photo. 
     - If you are the RECIPIENT: The file is deleted from the server immediately after viewing.
     - If you are the SENDER: You can view it without triggering deletion.
     """
     try:
         doc = await secret_service.get_secret_metadata(secret_id, current_user["id"], timezone)
-        file_path = secret_service.get_full_path(doc["stored_filename"])
         
         # If recipient is viewing, trigger one-time-view logic
         if doc["recipient_id"] == current_user["id"]:
             await secret_service.mark_secret_viewed(secret_id)
-            # Removed instant physical deletion to allow re-watches within 24h
-        
-        return FileResponse(
-            path=file_path,
-            filename=doc["filename"],
-            media_type=doc["file_type"]
-        )
+            
+        file_url = doc.get("stored_filename")
+        if file_url and "amazonaws.com" in file_url:
+            from fastapi.responses import RedirectResponse
+            return RedirectResponse(url=file_url)
+        else:
+            file_path = secret_service.get_full_path(doc["stored_filename"])
+            return FileResponse(
+                path=file_path,
+                filename=doc["filename"],
+                media_type=doc["file_type"]
+            )
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:

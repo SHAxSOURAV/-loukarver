@@ -1,5 +1,7 @@
 from typing import Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from datetime import datetime, timezone
 
@@ -10,8 +12,8 @@ from app.schemas.notification import NotificationCreate, NotificationType
 
 class MoodService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.mood_list = self.db["mood_list"]
         self.mood_history = self.db["mood_history"]
         self.users = self.db["users"]

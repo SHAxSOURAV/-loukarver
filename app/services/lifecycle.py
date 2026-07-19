@@ -3,6 +3,8 @@ import zoneinfo
 from datetime import datetime, date, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from app.core.config import settings
 from app.schemas.lifecycle import PeriodCreate, PeriodUpdate, PhaseNoteCreate, PhaseNoteUpdate
@@ -14,8 +16,8 @@ def parse_date(date_str: str) -> date:
 
 class LifeCycleService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.periods = self.db["period_history"]
         self.notes = self.db["lifecycle_notes"]
         self.users = self.db["users"]
@@ -247,6 +249,7 @@ class LifeCycleService:
                 "date": note["date"],
                 "text": note["text"],
                 "created_ago": created_ago,
+                "created_at": created_at.isoformat() if created_at else None,
                 "is_owner": note["user_id"] == viewer_id
             }
         return None
@@ -276,7 +279,30 @@ class LifeCycleService:
             upsert=True
         )
         
-        # Dispatch notification to partner if sharing is enabled
+        # Notify partner
+        try:
+            from app.services.notification import notification_service
+            from app.schemas.notification import NotificationCreate, NotificationType
+            user = await self.users.find_one({"_id": ObjectId(user_id)})
+            if user and user.get("is_aligned") and user.get("partner"):
+                partner_id = user["partner"].get("user_id")
+                if partner_id:
+                    user_name = user.get("name", "Your partner")
+                    await notification_service.schedule_notification(
+                        sender_id=user_id,
+                        payload=NotificationCreate(
+                            recipient_id=partner_id,
+                            title="Cycle Note Update",
+                            message=f"{user_name} added a note about her cycle: \"{payload.text[:30]}...\"",
+                            type=NotificationType.CYCLE_UPDATE,
+                            scheduled_for=now_utc,
+                            timezone="UTC"
+                        )
+                    )
+        except Exception as e:
+            print(f"Failed to send note notification: {e}")
+
+        # Update partner WebSocket if aligned to partner if sharing is enabled
         owner_id, partner_id = await self._get_owner_and_partner(user_id)
         if partner_id:
             owner_user = await self.users.find_one({"_id": ObjectId(owner_id)})

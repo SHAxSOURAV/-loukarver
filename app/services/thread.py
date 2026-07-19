@@ -4,11 +4,14 @@ import zoneinfo
 import boto3
 from typing import Dict, Any, List, Optional, Tuple
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from datetime import datetime, timezone, timedelta
 from fastapi import UploadFile
 
 from app.core.config import settings
+from app.services.s3_utils import s3_service
 from app.schemas.thread import (
     ThreadCategory, PromptType, PromptQuestionCreate,
     LetterCreate, PhotoCreate, PromptAskCreate, AppreciationCreate, CheckInThreadCreate
@@ -40,26 +43,11 @@ DEFAULT_DESIRED_QUESTIONS = [
 
 class ThreadService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.messages_collection = self.db["thread_messages"]
         self.prompts_collection = self.db["thread_prompts"]
         self.users = self.db["users"]
-        self.storage_path = "uploads"
-        
-        if not os.path.exists(self.storage_path):
-            os.makedirs(self.storage_path)
-            
-        self.s3_bucket = os.getenv("AWS_S3_BUCKET_NAME")
-        if self.s3_bucket:
-            self.s3_client = boto3.client(
-                's3',
-                aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-                aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-                region_name=os.getenv("AWS_REGION")
-            )
-        else:
-            self.s3_client = None
 
     async def init_indexes(self):
         await self.messages_collection.create_index([("creator_id", 1), ("partner_id", 1)])
@@ -143,24 +131,7 @@ class ThreadService:
         partner_id = await self._get_partner_id(user_id)
         if not partner_id: raise ValueError("Partner alignment required.")
         
-        ext = os.path.splitext(file.filename)[1]
-        unique_filename = f"{uuid.uuid4().hex}{ext}"
-        
-        if self.s3_client and self.s3_bucket:
-            s3_key = f"voice/{unique_filename}"
-            self.s3_client.upload_fileobj(
-                file.file, 
-                self.s3_bucket, 
-                s3_key,
-                ExtraArgs={'ContentType': file.content_type}
-            )
-            file_url = f"https://{self.s3_bucket}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{s3_key}"
-        else:
-            local_path = os.path.join(self.storage_path, unique_filename)
-            content = await file.read()
-            with open(local_path, "wb") as f:
-                f.write(content)
-            file_url = f"/uploads/{unique_filename}"
+        file_url = await s3_service.upload_file(file, folder="voice")
         
         new_doc = {
             "category": ThreadCategory.VOICE,
@@ -184,24 +155,7 @@ class ThreadService:
         partner_id = await self._get_partner_id(user_id)
         if not partner_id: raise ValueError("Partner alignment required.")
         
-        ext = os.path.splitext(payload.filename)[1] if payload.filename else ".m4a"
-        unique_filename = f"{uuid.uuid4().hex}{ext}"
-        
-        file_bytes = base64.b64decode(payload.file_base64.split(",")[-1] if "," in payload.file_base64 else payload.file_base64)
-        
-        if self.s3_client and self.s3_bucket:
-            s3_key = f"voice/{unique_filename}"
-            self.s3_client.upload_fileobj(
-                io.BytesIO(file_bytes),
-                self.s3_bucket,
-                s3_key,
-                ExtraArgs={'ContentType': payload.content_type}
-            )
-            file_url = f"https://{self.s3_bucket}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{s3_key}"
-        else:
-            local_path = os.path.join(self.storage_path, unique_filename)
-            with open(local_path, "wb") as f: f.write(file_bytes)
-            file_url = f"/uploads/{unique_filename}"
+        file_url = await s3_service.upload_bytes(file_bytes, payload.filename, payload.content_type, folder="voice")
             
         new_doc = {
             "category": ThreadCategory.VOICE,
@@ -224,24 +178,7 @@ class ThreadService:
         partner_id = await self._get_partner_id(user_id)
         if not partner_id: raise ValueError("Partner alignment required.")
         
-        ext = os.path.splitext(file.filename)[1]
-        unique_filename = f"{uuid.uuid4().hex}{ext}"
-        
-        if self.s3_client and self.s3_bucket:
-            s3_key = f"photo/{unique_filename}"
-            self.s3_client.upload_fileobj(
-                file.file, 
-                self.s3_bucket, 
-                s3_key,
-                ExtraArgs={'ContentType': file.content_type}
-            )
-            file_url = f"https://{self.s3_bucket}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{s3_key}"
-        else:
-            local_path = os.path.join(self.storage_path, unique_filename)
-            content = await file.read()
-            with open(local_path, "wb") as f:
-                f.write(content)
-            file_url = f"/uploads/{unique_filename}"
+        file_url = await s3_service.upload_file(file, folder="photo")
         
         new_doc = {
             "category": ThreadCategory.PHOTO,
@@ -265,24 +202,7 @@ class ThreadService:
         partner_id = await self._get_partner_id(user_id)
         if not partner_id: raise ValueError("Partner alignment required.")
         
-        ext = os.path.splitext(payload.filename)[1] if payload.filename else ".jpg"
-        unique_filename = f"{uuid.uuid4().hex}{ext}"
-        
-        file_bytes = base64.b64decode(payload.file_base64.split(",")[-1] if "," in payload.file_base64 else payload.file_base64)
-        
-        if self.s3_client and self.s3_bucket:
-            s3_key = f"photo/{unique_filename}"
-            self.s3_client.upload_fileobj(
-                io.BytesIO(file_bytes),
-                self.s3_bucket,
-                s3_key,
-                ExtraArgs={'ContentType': payload.content_type}
-            )
-            file_url = f"https://{self.s3_bucket}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{s3_key}"
-        else:
-            local_path = os.path.join(self.storage_path, unique_filename)
-            with open(local_path, "wb") as f: f.write(file_bytes)
-            file_url = f"/uploads/{unique_filename}"
+        file_url = await s3_service.upload_bytes(file_bytes, payload.filename, payload.content_type, folder="photo")
             
         new_doc = {
             "category": ThreadCategory.PHOTO,
@@ -460,48 +380,24 @@ class ThreadService:
             if file:
                 old_file = doc["content"].get("file_url")
                 if old_file:
-                    if "amazonaws.com" in old_file and self.s3_client and self.s3_bucket:
-                        try:
-                            key = old_file.split(".amazonaws.com/")[1]
-                            self.s3_client.delete_object(Bucket=self.s3_bucket, Key=key)
-                        except Exception: pass
+                    if "amazonaws.com" in old_file:
+                        await s3_service.delete_file(old_file)
                     else:
                         lp = old_file.lstrip("/")
                         if os.path.exists(lp): os.remove(lp)
                 
-                ext = os.path.splitext(file.filename)[1]
-                unique_filename = f"{uuid.uuid4().hex}{ext}"
-                if self.s3_client and self.s3_bucket:
-                    s3_key = f"photo/{unique_filename}"
-                    self.s3_client.upload_fileobj(file.file, self.s3_bucket, s3_key, ExtraArgs={'ContentType': file.content_type})
-                    content_updates["file_url"] = f"https://{self.s3_bucket}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{s3_key}"
-                else:
-                    local_path = os.path.join(self.storage_path, unique_filename)
-                    with open(local_path, "wb") as f: f.write(await file.read())
-                    content_updates["file_url"] = f"/uploads/{unique_filename}"
+                content_updates["file_url"] = await s3_service.upload_file(file, folder="photo")
         elif category == ThreadCategory.VOICE:
             if file:
                 old_file = doc["content"].get("file_url")
                 if old_file:
-                    if "amazonaws.com" in old_file and self.s3_client and self.s3_bucket:
-                        try:
-                            key = old_file.split(".amazonaws.com/")[1]
-                            self.s3_client.delete_object(Bucket=self.s3_bucket, Key=key)
-                        except Exception: pass
+                    if "amazonaws.com" in old_file:
+                        await s3_service.delete_file(old_file)
                     else:
                         lp = old_file.lstrip("/")
                         if os.path.exists(lp): os.remove(lp)
                 
-                ext = os.path.splitext(file.filename)[1]
-                unique_filename = f"{uuid.uuid4().hex}{ext}"
-                if self.s3_client and self.s3_bucket:
-                    s3_key = f"voice/{unique_filename}"
-                    self.s3_client.upload_fileobj(file.file, self.s3_bucket, s3_key, ExtraArgs={'ContentType': file.content_type})
-                    content_updates["file_url"] = f"https://{self.s3_bucket}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{s3_key}"
-                else:
-                    local_path = os.path.join(self.storage_path, unique_filename)
-                    with open(local_path, "wb") as f: f.write(await file.read())
-                    content_updates["file_url"] = f"/uploads/{unique_filename}"
+                content_updates["file_url"] = await s3_service.upload_file(file, folder="voice")
         elif category == ThreadCategory.PROMPT:
             if doc["content"].get("status") == "replied":
                 raise ValueError("Cannot update a prompt that has already been replied to.")

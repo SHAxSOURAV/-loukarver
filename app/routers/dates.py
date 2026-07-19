@@ -10,6 +10,7 @@ from app.schemas.dates import (
     PhotoPayload
 )
 from app.services.dates import date_service
+from app.services.s3_utils import s3_service
 
 router = APIRouter(prefix="/dates", tags=["Dates"])
 
@@ -131,15 +132,8 @@ async def add_review(
                     if hasattr(item, 'read'):  # It's an UploadFile
                         if not item.filename or item.size == 0:
                             continue
-                        os.makedirs("uploads/dates", exist_ok=True)
-                        ext = ".jpg"
-                        if item.filename:
-                            ext = os.path.splitext(item.filename)[1] or ".jpg"
-                        filename = f"{uuid.uuid4().hex}{ext}"
-                        file_path = os.path.join("uploads", "dates", filename)
-                        with open(file_path, "wb") as f:
-                            f.write(await item.read())
-                        photo_urls.append(f"/{file_path.replace(os.sep, '/')}")
+                        file_url = await s3_service.upload_file(item, folder="dates")
+                        photo_urls.append(file_url)
                 
         payload = DateReviewCreate(rating=rating, text=text, photos=photo_urls)
         result = await date_service.add_review(date_id, current_user["id"], payload)
@@ -193,15 +187,8 @@ async def update_review(
                     if hasattr(item, 'read'):  # It's an UploadFile
                         if not item.filename or item.size == 0:
                             continue
-                        os.makedirs("uploads/dates", exist_ok=True)
-                        ext = ".jpg"
-                        if item.filename:
-                            ext = os.path.splitext(item.filename)[1] or ".jpg"
-                        filename = f"{uuid.uuid4().hex}{ext}"
-                        file_path = os.path.join("uploads", "dates", filename)
-                        with open(file_path, "wb") as f:
-                            f.write(await item.read())
-                        photo_urls.append(f"/{file_path.replace(os.sep, '/')}")
+                        file_url = await s3_service.upload_file(item, folder="dates")
+                        photo_urls.append(file_url)
                         
         payload = DateReviewCreate(rating=rating, text=text, photos=photo_urls)
         result = await date_service.update_review(date_id, current_user["id"], payload)

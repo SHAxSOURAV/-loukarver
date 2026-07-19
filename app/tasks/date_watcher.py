@@ -5,6 +5,8 @@ from app.services.notification import notification_service
 from app.schemas.notification import NotificationCreate
 
 async def watch_dates():
+    # Delay initial execution to ensure FastAPI event loop and Motor connections are fully initialized
+    await asyncio.sleep(10)
     while True:
         try:
             now = datetime.now(timezone.utc)

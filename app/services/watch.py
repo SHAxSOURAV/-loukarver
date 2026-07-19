@@ -2,6 +2,8 @@ import re
 import zoneinfo
 from typing import Dict, Any, List, Optional, Tuple
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from datetime import datetime, timezone, timedelta
 
@@ -30,8 +32,8 @@ def parse_watch_time(date_str: str, time_str: str, tz_str: str) -> datetime:
 
 class WatchService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.watch_sessions = self.db["watch_sessions"]
         self.users = self.db["users"]
 

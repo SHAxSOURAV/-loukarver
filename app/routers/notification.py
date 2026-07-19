@@ -3,8 +3,13 @@ from typing import List, Optional
 
 from app.routers.auth import get_current_user
 from app.schemas.notification import (
-    NotificationCreate, NotificationResponse, NotificationPaginatedResponse, GenericResponse, PresenceCreate
+    NotificationCreate, NotificationResponse, NotificationPaginatedResponse, GenericResponse, PresenceCreate, NotificationType
 )
+from pydantic import BaseModel
+
+class TriggerCreate(BaseModel):
+    type: NotificationType
+    message: str
 from app.services.notification import notification_service
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
@@ -22,6 +27,32 @@ async def log_user_presence(payload: PresenceCreate, current_user: dict = Depend
 async def schedule_notification(payload: NotificationCreate, current_user: dict = Depends(get_current_user)):
     """Schedule a new notification for yourself or your partner."""
     return await notification_service.schedule_notification(current_user["id"], payload)
+
+@router.post("/trigger", response_model=GenericResponse)
+async def trigger_notification(payload: TriggerCreate, current_user: dict = Depends(get_current_user)):
+    """Trigger a notification for the partner."""
+    from datetime import datetime, timezone
+    from app.services.relationships import relationship_service
+    
+    # Get partner ID
+    profile = await relationship_service.get_relationship_profile(current_user["id"])
+    partner_id = profile.get("partner", {}).get("user_id") if profile else None
+    
+    if not partner_id:
+        return GenericResponse(success=False, message="No partner aligned.")
+        
+    await notification_service.schedule_notification(
+        sender_id=current_user["id"],
+        payload=NotificationCreate(
+            recipient_id=partner_id,
+            title=payload.type.value,
+            message=payload.message,
+            type=payload.type,
+            scheduled_for=datetime.now(timezone.utc),
+            timezone="UTC"
+        )
+    )
+    return GenericResponse(success=True, message="Notification triggered.")
 
 @router.get("/", response_model=NotificationPaginatedResponse)
 async def list_my_notifications(

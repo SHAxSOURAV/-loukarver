@@ -57,6 +57,8 @@ async def toggle_cycle_sharing(payload: CycleShareToggle, current_user: dict = D
 async def add_period_start(payload: PeriodCreate, current_user: dict = Depends(get_current_user)):
     """Logs a new period start date."""
     try:
+        if current_user.get("gender") != "Female":
+            raise HTTPException(status_code=403, detail="Only female users can modify cycle data.")
         result = await lifecycle_service.add_period(current_user["id"], payload)
         return {"success": True, "message": "Period start date logged.", "data": result}
     except Exception as e:
@@ -66,6 +68,8 @@ async def add_period_start(payload: PeriodCreate, current_user: dict = Depends(g
 async def update_period_start(period_id: str, payload: PeriodUpdate, current_user: dict = Depends(get_current_user)):
     """Updates an existing period start date."""
     try:
+        if current_user.get("gender") != "Female":
+            raise HTTPException(status_code=403, detail="Only female users can modify cycle data.")
         await lifecycle_service.update_period(current_user["id"], period_id, payload)
         return {"success": True, "message": "Period record updated."}
     except ValueError as ve:
@@ -77,6 +81,8 @@ async def update_period_start(period_id: str, payload: PeriodUpdate, current_use
 async def delete_period_record(period_id: str, current_user: dict = Depends(get_current_user)):
     """Deletes a period start date record."""
     try:
+        if current_user.get("gender") != "Female":
+            raise HTTPException(status_code=403, detail="Only female users can modify cycle data.")
         await lifecycle_service.delete_period(current_user["id"], period_id)
         return {"success": True, "message": "Period record deleted."}
     except Exception as e:
@@ -88,6 +94,8 @@ async def delete_period_record(period_id: str, current_user: dict = Depends(get_
 async def add_phase_note(payload: PhaseNoteCreate, current_user: dict = Depends(get_current_user)):
     """Adds or updates a text note about the current phase for a specific date."""
     try:
+        if current_user.get("gender") != "Female":
+            raise HTTPException(status_code=403, detail="Only female users can modify cycle data.")
         result = await lifecycle_service.add_note(current_user["id"], payload)
         return {"success": True, "message": "Phase note saved.", "data": result}
     except Exception as e:
@@ -97,6 +105,8 @@ async def add_phase_note(payload: PhaseNoteCreate, current_user: dict = Depends(
 async def update_phase_note(note_id: str, payload: PhaseNoteUpdate, current_user: dict = Depends(get_current_user)):
     """Updates the text of a previously logged phase note."""
     try:
+        if current_user.get("gender") != "Female":
+            raise HTTPException(status_code=403, detail="Only female users can modify cycle data.")
         await lifecycle_service.update_note(current_user["id"], note_id, payload)
         return {"success": True, "message": "Phase note updated."}
     except PermissionError as pe:
@@ -108,6 +118,8 @@ async def update_phase_note(note_id: str, payload: PhaseNoteUpdate, current_user
 async def delete_phase_note(note_id: str, current_user: dict = Depends(get_current_user)):
     """Deletes a phase note."""
     try:
+        if current_user.get("gender") != "Female":
+            raise HTTPException(status_code=403, detail="Only female users can modify cycle data.")
         await lifecycle_service.delete_note(current_user["id"], note_id)
         return {"success": True, "message": "Phase note deleted."}
     except PermissionError as pe:

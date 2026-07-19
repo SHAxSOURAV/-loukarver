@@ -2,6 +2,8 @@ import uuid
 import zoneinfo
 from typing import Dict, Any, List, Optional, Tuple
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from datetime import datetime, timezone
 
@@ -12,8 +14,8 @@ from app.schemas.milestone import (
 
 class MilestoneService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.milestones_collection = self.db["milestone_goals"]
         self.users = self.db["users"]
 
@@ -148,7 +150,20 @@ class MilestoneService:
         partner_id = await self._get_partner_id(user_id)
         if partner_id:
             from app.core.websocket import ws_manager
+            from app.services.notification import notification_service
+            from app.schemas.notification import NotificationCreate, NotificationType
             await ws_manager.broadcast_to_user(partner_id, {"type": "MILESTONE_UPDATED"})
+            await notification_service.schedule_notification(
+                sender_id=user_id,
+                payload=NotificationCreate(
+                    recipient_id=partner_id,
+                    title="Milestone Step",
+                    message="Partner added a step to a milestone",
+                    type=NotificationType.MILESTONE_STEP,
+                    scheduled_for=datetime.now(timezone.utc),
+                    timezone="UTC"
+                )
+            )
 
         return await self._map_milestone(result, pin, user_timezone=step_payload.timezone)
 
@@ -236,7 +251,22 @@ class MilestoneService:
         other_id = doc.get("partner_id") if str(doc.get("creator_id")) == user_id else doc.get("creator_id")
         if other_id:
             from app.core.websocket import ws_manager
+            from app.services.notification import notification_service
+            from app.schemas.notification import NotificationCreate, NotificationType
             await ws_manager.broadcast_to_user(str(other_id), {"type": "MILESTONE_UPDATED"})
+            
+            action = "completed" if new_status else "uncompleted"
+            await notification_service.schedule_notification(
+                sender_id=user_id,
+                payload=NotificationCreate(
+                    recipient_id=str(other_id),
+                    title="Milestone Step",
+                    message=f"Partner {action} a milestone step",
+                    type=NotificationType.MILESTONE_STEP,
+                    scheduled_for=datetime.now(timezone.utc),
+                    timezone="UTC"
+                )
+            )
 
         return await self._map_milestone(result, pin, user_timezone=user_timezone)
 

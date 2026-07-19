@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     
     FRONTEND_URL: str = ""
     
+    # AWS S3 Configuration
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    AWS_REGION: str = "eu-north-1"
+    AWS_S3_BUCKET_NAME: str = ""
+    
     # Read from .env if present
     model_config = SettingsConfigDict(
         env_file=".env",

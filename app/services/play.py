@@ -1,13 +1,15 @@
 from typing import Dict, Any, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from app.core.config import settings
 from app.services.vibe_check import vibe_check_service
 from app.services.vibe_card import vibe_card_service
 
 class PlayService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.vibe_connections = self.db["vibe_check_connections"]
         self.cumulative_scores = self.db["vibe_cumulative_scores"]
         self.user_streaks = self.db["vibe_user_streaks"]

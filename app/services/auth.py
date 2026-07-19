@@ -10,6 +10,8 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from app.core.config import settings
 from app.schemas.auth import (
     SignupRequest, VerifyEmailRequest, ResendOtpRequest,

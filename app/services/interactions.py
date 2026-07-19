@@ -1,5 +1,7 @@
 from typing import Dict, Any, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from datetime import datetime, timezone, timedelta
 
@@ -10,8 +12,8 @@ from app.schemas.notification import NotificationCreate, NotificationType
 
 class InteractionService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.interactions = self.db["partner_interactions"]
         self.users = self.db["users"]
 
@@ -76,7 +78,7 @@ class InteractionService:
                     recipient_id=info["partner_id"],
                     title="Thinking of you",
                     message=f"{info['user_name']} sent you a silent ping.",
-                    type=NotificationType.SYSTEM,
+                    type=NotificationType.THINKING_OF_YOU,
                     scheduled_for=datetime.now(timezone.utc),
                     timezone="UTC"
                 )

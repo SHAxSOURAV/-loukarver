@@ -1,6 +1,8 @@
 import zoneinfo
 from typing import Dict, Any, List, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from datetime import datetime, timezone
 from app.core.config import settings
@@ -11,8 +13,8 @@ from app.schemas.notification import NotificationCreate, NotificationType
 
 class VibeDateService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.dates = self.db["vibe_dates"]
         self.connections = self.db["vibe_check_connections"]
         self.profiles = self.db["vibe_check_profiles"]

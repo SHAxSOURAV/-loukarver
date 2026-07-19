@@ -1,44 +1,68 @@
 from typing import Dict, Any, List, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from datetime import datetime, timezone
 
 from app.core.config import settings
 from app.schemas.energy import EnergyCreate, EnergyUpdate, EnergyPatchShare
 from app.services.notification import notification_service
-from app.schemas.notification import NotificationCreate, NotificationType
+from app.schemas.notification import NotificationCreate, NotificationType, PresenceCreate
 from app.core.websocket import ws_manager
 
 class EnergyService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.energy_logs = self.db["energy_logs"]
         self.users = self.db["users"]
 
     async def create_energy_log(self, user_id: str, payload: EnergyCreate) -> Dict[str, Any]:
-        new_doc = payload.model_dump()
-        new_doc["user_id"] = user_id
-        new_doc["created_at"] = datetime.now(timezone.utc)
-        new_doc["updated_at"] = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
+        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         
-        result = await self.energy_logs.insert_one(new_doc)
-        new_doc["id"] = str(result.inserted_id)
+        # Check if the user already has a log for today — upsert instead of duplicating
+        existing = await self.energy_logs.find_one({
+            "user_id": user_id,
+            "created_at": {"$gte": start_of_day}
+        }, sort=[("created_at", -1)])
         
-        # Send Notification and WebSocket if shared
-        if payload.share_with_partner:
-            user = await self.users.find_one({"_id": ObjectId(user_id)})
-            if user and user.get("partner") and user["partner"].get("user_id"):
-                partner_id = user["partner"]["user_id"]
-                user_name = user.get("name", "Your partner")
-                
-                # Websocket
-                await ws_manager.broadcast_to_user(
-                    partner_id, 
-                    {"type": "ENERGY_UPDATED"}
-                )
-                
-                # Push notification
+        if existing:
+            # Update the existing log
+            updates = payload.model_dump()
+            updates["updated_at"] = now
+            await self.energy_logs.update_one(
+                {"_id": existing["_id"]},
+                {"$set": updates}
+            )
+            new_doc = {**existing, **updates}
+            new_doc["id"] = str(existing["_id"])
+            if "_id" in new_doc:
+                del new_doc["_id"]
+        else:
+            # Create a brand new log
+            new_doc = payload.model_dump()
+            new_doc["user_id"] = user_id
+            new_doc["created_at"] = now
+            new_doc["updated_at"] = now
+            result = await self.energy_logs.insert_one(new_doc)
+            new_doc["id"] = str(result.inserted_id)
+        
+        # Send Notification and WebSocket
+        user = await self.users.find_one({"_id": ObjectId(user_id)})
+        if user and user.get("partner") and user["partner"].get("user_id"):
+            partner_id = user["partner"]["user_id"]
+            user_name = user.get("name", "Your partner")
+            
+            # Websocket broadcast is sent always to trigger UI sync
+            await ws_manager.broadcast_to_user(
+                partner_id, 
+                {"type": "ENERGY_UPDATED"}
+            )
+            
+            # Push notification and presence logged if shared
+            if payload.share_with_partner:
                 try:
                     await notification_service.schedule_notification(
                         sender_id=user_id,
@@ -53,6 +77,15 @@ class EnergyService:
                     )
                 except Exception as e:
                     print(f"Failed to send energy notification: {e}")
+                    
+                # Log Presence
+                try:
+                    await notification_service.log_presence(
+                        user_id,
+                        PresenceCreate(timezone="UTC")
+                    )
+                except Exception as e:
+                    print(f"Failed to log energy presence: {e}")
                     
         return new_doc
 
@@ -90,20 +123,20 @@ class EnergyService:
             result["id"] = str(result["_id"])
             del result["_id"]
             
-            # Send Notification and WebSocket if shared
-            if updates.get("share_with_partner"):
-                user = await self.users.find_one({"_id": ObjectId(user_id)})
-                if user and user.get("partner") and user["partner"].get("user_id"):
-                    partner_id = user["partner"]["user_id"]
-                    user_name = user.get("name", "Your partner")
-                    
-                    # Websocket
-                    await ws_manager.broadcast_to_user(
-                        partner_id, 
-                        {"type": "ENERGY_UPDATED"}
-                    )
-                    
-                    # Push notification
+            # Send Notification and WebSocket
+            user = await self.users.find_one({"_id": ObjectId(user_id)})
+            if user and user.get("partner") and user["partner"].get("user_id"):
+                partner_id = user["partner"]["user_id"]
+                user_name = user.get("name", "Your partner")
+                
+                # Websocket broadcast is sent always to trigger UI sync
+                await ws_manager.broadcast_to_user(
+                    partner_id, 
+                    {"type": "ENERGY_UPDATED"}
+                )
+                
+                # Push notification if shared in final state
+                if result.get("share_with_partner"):
                     try:
                         await notification_service.schedule_notification(
                             sender_id=user_id,
@@ -111,7 +144,7 @@ class EnergyService:
                                 recipient_id=partner_id,
                                 title="State Updated",
                                 message=f"{user_name} updated their daily energy & sleep.",
-                                type=NotificationType.SYSTEM,
+                                type=NotificationType.STATE_UPDATE,
                                 scheduled_for=datetime.now(timezone.utc),
                                 timezone="UTC"
                             )
@@ -134,6 +167,14 @@ class EnergyService:
                 "updated_at": datetime.now(timezone.utc)
             }}
         )
+        if result.matched_count > 0:
+            user = await self.users.find_one({"_id": ObjectId(user_id)})
+            if user and user.get("partner") and user["partner"].get("user_id"):
+                partner_id = user["partner"]["user_id"]
+                await ws_manager.broadcast_to_user(
+                    partner_id, 
+                    {"type": "ENERGY_UPDATED"}
+                )
         return result.matched_count > 0
 
     async def get_partner_energy(self, user_id: str) -> List[Dict[str, Any]]:
@@ -143,16 +184,17 @@ class EnergyService:
             
         partner_id = user["partner"]["user_id"]
         cursor = self.energy_logs.find({
-            "user_id": partner_id,
-            "share_with_partner": True
-        }).sort("created_at", -1).limit(10)
+            "user_id": partner_id
+        }).sort("created_at", -1).limit(1)
         
         docs = await cursor.to_list(length=None)
         results = []
-        for d in docs:
-            d["id"] = str(d["_id"])
-            del d["_id"]
-            results.append(d)
+        if docs:
+            d = docs[0]
+            if d.get("share_with_partner", True):
+                d["id"] = str(d["_id"])
+                del d["_id"]
+                results.append(d)
         return results
 
 energy_service = EnergyService()

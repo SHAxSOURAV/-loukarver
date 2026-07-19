@@ -3,13 +3,18 @@ import string
 from typing import List, Dict, Any
 from datetime import datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from app.core.config import settings
 from app.schemas.relationships import RelationshipCreate
+from app.services.notification import notification_service
+from app.schemas.notification import NotificationCreate, NotificationType, PresenceCreate
+from app.core.websocket import ws_manager
 
 class RelationshipService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.collection = self.db["users"]
 
     async def get_all_relationships(self) -> List[Dict[str, Any]]:
@@ -259,17 +264,20 @@ class RelationshipService:
             return False
 
         # Connect both
+        today_str = datetime.now().strftime("%m.%d.%Y")
+
         await self.collection.update_one(
             {"_id": user["_id"]},
             {"$set": {
                 "is_aligned": True,
                 "secret_key": None,
+                "relationship_start_date": today_str,
                 "partner": {
                     "user_id": str(partner["_id"]),
                     "name": partner["name"],
                     "city_name": partner["city_name"],
-                    "relationship_start_date": partner["relationship_start_date"],
-                    "is_long_distance": partner["is_long_distance"]
+                    "relationship_start_date": today_str,
+                    "is_long_distance": partner.get("is_long_distance", False)
                 }
             }}
         )
@@ -278,12 +286,13 @@ class RelationshipService:
             {"$set": {
                 "is_aligned": True,
                 "secret_key": None,
+                "relationship_start_date": today_str,
                 "partner": {
                     "user_id": str(user["_id"]),
                     "name": user["name"],
                     "city_name": user["city_name"],
-                    "relationship_start_date": user["relationship_start_date"],
-                    "is_long_distance": user["is_long_distance"]
+                    "relationship_start_date": today_str,
+                    "is_long_distance": user.get("is_long_distance", False)
                 }
             }}
         )
@@ -398,6 +407,42 @@ class RelationshipService:
         if updated and "_id" in updated:
             updated["id"] = str(updated["_id"])
             updated["_id"] = str(updated["_id"])
+            
+            if updated.get("partner") and updated["partner"].get("user_id"):
+                partner_id = updated["partner"]["user_id"]
+                user_name = updated.get("name", "Your partner")
+                
+                # Websocket
+                await ws_manager.broadcast_to_user(
+                    partner_id, 
+                    {"type": "PROFILE_PHOTO_UPDATED"}
+                )
+                
+                # Push notification
+                try:
+                    await notification_service.schedule_notification(
+                        sender_id=user_id,
+                        payload=NotificationCreate(
+                            recipient_id=partner_id,
+                            title="Profile Photo Updated",
+                            message=f"{user_name} updated their profile picture.",
+                            type=NotificationType.STATE_UPDATE,
+                            scheduled_for=datetime.now(timezone.utc),
+                            timezone="UTC"
+                        )
+                    )
+                except Exception as e:
+                    print(f"Failed to send profile photo notification: {e}")
+
+                # Presence
+                try:
+                    await notification_service.log_presence(
+                        user_id,
+                        PresenceCreate(timezone="UTC")
+                    )
+                except Exception as e:
+                    print(f"Failed to log profile photo presence: {e}")
+
         return updated
 
     async def get_profile_photo_path(self, user_id: str) -> str:

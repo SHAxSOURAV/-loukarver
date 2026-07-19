@@ -2,6 +2,8 @@ import re
 from datetime import datetime, date, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from app.core.config import settings
 from app.schemas.us import MilestoneCreate, MilestoneUpdate, NextMeetCreate, NextMeetUpdate
@@ -14,8 +16,8 @@ def parse_date(date_str: str) -> date:
 
 class UsService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.users_collection = self.db["users"]
         self.milestones_collection = self.db["milestones"]
         self.next_meets_collection = self.db["next_meets"]
@@ -153,6 +155,19 @@ class UsService:
             await self.users_collection.update_one(
                 {"_id": ObjectId(partner_id)},
                 {"$set": {"relationship_start_date": new_date}}
+            )
+            from app.services.notification import notification_service
+            from app.schemas.notification import NotificationCreate, NotificationType
+            await notification_service.schedule_notification(
+                sender_id=user_id,
+                payload=NotificationCreate(
+                    recipient_id=partner_id,
+                    title="Us Section Update",
+                    message="Partner updated the start date",
+                    type=NotificationType.US_SECTION_UPDATE,
+                    scheduled_for=datetime.now(timezone.utc),
+                    timezone="UTC"
+                )
             )
         
         return {"relationship_start_date": new_date}

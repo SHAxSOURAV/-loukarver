@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from typing import Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from app.core.config import settings
 from app.schemas.proposals import ProposalCreate
@@ -9,8 +11,8 @@ from app.services.us import UsService
 
 class ProposalService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.users_collection = self.db["users"]
         self.proposals_collection = self.db["proposals"]
         self.notifications_collection = self.db["notifications"]

@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File
 from fastapi.responses import FileResponse
 from app.schemas.relationships import RelationshipCreate, RelationshipResponse, AlignRequest, AlignResponse, BreakAlignmentRequest
 from app.services.relationships import relationship_service
+from app.services.s3_utils import s3_service
 from app.routers.auth import get_current_user
 from app.schemas.auth import UserUpdate, UserMeResponse
 
@@ -58,6 +59,12 @@ async def get_partner_profile(current_user: dict = Depends(get_current_user)):
             data=data
         )
     except ValueError as ve:
+        if str(ve) == "You are not aligned with any partner.":
+            return RelationshipResponse(
+                success=False,
+                message=str(ve),
+                data=None
+            )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(ve)
@@ -195,11 +202,6 @@ async def break_alignment(payload: BreakAlignmentRequest, current_user: dict = D
 async def upload_photo(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     """Uploads a profile photo for the authenticated user."""
     try:
-        os.makedirs("uploads/profiles", exist_ok=True)
-        ext = ".jpg"
-        filename = f"{uuid.uuid4().hex}{ext}"
-        file_path = os.path.join("uploads", "profiles", filename)
-        
         contents = await file.read()
         nparr = np.frombuffer(contents, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -209,11 +211,16 @@ async def upload_photo(file: UploadFile = File(...), current_user: dict = Depend
             
         # Resize to 256x256 using INTER_AREA for downsampling
         resized = cv2.resize(img, (256, 256), interpolation=cv2.INTER_AREA)
-        
-        # Save as optimized JPEG
-        cv2.imwrite(file_path, resized, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+
+        # Save as optimized JPEG to memory
+        is_success, buffer = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if not is_success:
+            raise ValueError("Failed to encode image")
             
-        updated = await relationship_service.update_profile_photo(current_user["id"], file_path)
+        file_bytes = buffer.tobytes()
+        file_url = await s3_service.upload_bytes(file_bytes, filename=f"{uuid.uuid4().hex}.jpg", content_type="image/jpeg", folder="profiles")
+            
+        updated = await relationship_service.update_profile_photo(current_user["id"], file_url)
         return {"success": True, "message": "Photo uploaded successfully", "data": updated}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload photo: {str(e)}")
@@ -229,7 +236,14 @@ async def get_photo(user_id: str, current_user: dict = Depends(get_current_user)
                 raise HTTPException(status_code=403, detail="Not authorized to view this photo.")
                 
         file_path = await relationship_service.get_profile_photo_path(user_id)
-        if not file_path or not os.path.exists(file_path):
+        if not file_path:
+            raise HTTPException(status_code=404, detail="Photo not found.")
+            
+        if "amazonaws.com" in file_path:
+            from fastapi.responses import RedirectResponse
+            return RedirectResponse(url=file_path)
+            
+        if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="Photo not found.")
             
         return FileResponse(file_path)
@@ -243,8 +257,11 @@ async def delete_photo(current_user: dict = Depends(get_current_user)):
     """Deletes the current user's profile photo."""
     try:
         file_path = await relationship_service.get_profile_photo_path(current_user["id"])
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)
+        if file_path:
+            if "amazonaws.com" in file_path:
+                await s3_service.delete_file(file_path)
+            elif os.path.exists(file_path):
+                os.remove(file_path)
             
         updated = await relationship_service.update_profile_photo(current_user["id"], None)
         return {"success": True, "message": "Photo deleted successfully", "data": updated}

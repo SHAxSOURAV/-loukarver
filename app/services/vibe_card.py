@@ -3,6 +3,8 @@ import zoneinfo
 import asyncio
 from typing import Dict, Any, List, Optional, Tuple
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.db import get_client, get_db
+
 from bson import ObjectId
 from datetime import datetime, timezone, timedelta
 
@@ -11,8 +13,8 @@ from app.schemas.vibe_card import VibeAnswerSubmit, VibeQuestion
 
 class VibeCardService:
     def __init__(self) -> None:
-        self.client = AsyncIOMotorClient(settings.MONGO_URL)
-        self.db = self.client[settings.MONGO_DB_NAME]
+        self.client = get_client()
+        self.db = get_db()
         self.vibe_90day_cards = self.db["vibe_90day_cards"]
         self.user_answers = self.db["vibe_user_answers"]
         self.cumulative_scores = self.db["vibe_cumulative_scores"]
