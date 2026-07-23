@@ -7,6 +7,8 @@ import uuid
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from app.services.notification import notification_service
+from app.schemas.notification import NotificationCreate, NotificationType
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -125,9 +127,38 @@ class AuthService:
         password_hash = hash_password(payload.password)
         otp = "".join(random.choices(string.digits, k=6))
         
+        is_admin = False
+            
         # Check existing user
         existing = await self.collection.find_one({"email": email})
         if existing:
+            if existing.get("is_deleted"):
+                # Re-register soft-deleted account: reset account state and send new OTP
+                secret_key = await relationship_service.generate_unique_secret_key()
+                update_fields = {
+                    "password_hash": password_hash,
+                    "otp": otp,
+                    "name": email.split("@")[0],
+                    "is_verified": False,
+                    "is_deleted": False,
+                    "is_blocked": False,
+                    "is_hidden": False,
+                    "is_aligned": False,
+                    "partner": None,
+                    "secret_key": secret_key,
+                    "city_name": "",
+                    "relationship_start_date": "",
+                    "is_long_distance": False
+                }
+                await self.collection.update_one(
+                    {"_id": existing["_id"]},
+                    {"$set": update_fields}
+                )
+                existing.update(update_fields)
+                existing["id"] = str(existing["_id"])
+                send_otp_email(email, otp, subject="Verify your email - Loukarver")
+                return existing
+
             if existing.get("is_verified"):
                 raise ValueError("Email already registered")
             
@@ -154,15 +185,34 @@ class AuthService:
             "is_verified": False,
             "otp": otp,
             "is_aligned": False,
+            "is_admin": is_admin,
             "partner": None,
             "secret_key": secret_key,
             "city_name": "",
             "relationship_start_date": "",
-            "is_long_distance": False
+            "is_long_distance": False,
+            "is_blocked": False,
+            "is_hidden": False,
+            "is_deleted": False
         }
         
         result = await self.collection.insert_one(new_user)
         new_user["id"] = str(result.inserted_id)
+        
+        # Notify admins about new user
+        try:
+            admins = self.collection.find({"is_admin": True})
+            async for admin_doc in admins:
+                notification_payload = NotificationCreate(
+                    recipient_id=str(admin_doc["_id"]),
+                    type=NotificationType.SYSTEM,
+                    title="New User Signup",
+                    message=f"A new user ({email}) has just signed up.",
+                    metadata={"user_id": new_user["id"], "email": email}
+                )
+                await notification_service.schedule_notification(sender_id="system", payload=notification_payload)
+        except Exception as e:
+            print(f"Error sending admin notification: {e}")
         
         # Deliver SMTP verification email
         send_otp_email(email, otp, subject="Verify your email - Loukarver")
@@ -222,10 +272,120 @@ class AuthService:
         if not user or not user.get("password_hash") or not verify_password(payload.password, user["password_hash"]):
             raise ValueError("Invalid email or password")
             
+        if user.get("is_deleted"):
+            raise ValueError("Your account has been deleted")
+        if user.get("is_blocked"):
+            raise ValueError("Your account has been blocked by an administrator.")
+            
         if not user.get("is_verified"):
             raise PermissionError("Email not verified")
             
         # Generate tokens
+        token_data = {"user_id": str(user["_id"]), "email": email}
+        access_token = create_access_token(token_data)
+        refresh_token = create_refresh_token(token_data)
+        
+        user["id"] = str(user["_id"])
+        
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "user": user
+        }
+
+    async def admin_signup(self, payload: AdminSignupRequest) -> Dict[str, Any]:
+        if payload.admin_secret != settings.ADMIN_CREATION_SECRET:
+            raise PermissionError("Invalid admin creation secret")
+            
+        email = payload.email.lower()
+        password_hash = hash_password(payload.password)
+        otp = "".join(random.choices(string.digits, k=6))
+        
+        existing = await self.collection.find_one({"email": email})
+        if existing:
+            if existing.get("is_deleted"):
+                secret_key = await relationship_service.generate_unique_secret_key()
+                update_fields = {
+                    "password_hash": password_hash,
+                    "otp": otp,
+                    "name": payload.name,
+                    "is_verified": False,
+                    "is_admin": True,
+                    "is_deleted": False,
+                    "is_blocked": False,
+                    "is_hidden": False,
+                    "is_aligned": False,
+                    "partner": None,
+                    "secret_key": secret_key,
+                    "city_name": "",
+                    "relationship_start_date": "",
+                    "is_long_distance": False
+                }
+                await self.collection.update_one(
+                    {"_id": existing["_id"]},
+                    {"$set": update_fields}
+                )
+                existing.update(update_fields)
+                existing["id"] = str(existing["_id"])
+                send_otp_email(email, otp, subject="Verify your admin email - Loukarver")
+                return existing
+
+            if existing.get("is_verified"):
+                raise ValueError("Email already registered")
+            
+            await self.collection.update_one(
+                {"_id": existing["_id"]},
+                {"$set": {
+                    "password_hash": password_hash,
+                    "otp": otp,
+                    "name": payload.name,
+                    "is_admin": True
+                }}
+            )
+            existing["id"] = str(existing["_id"])
+            send_otp_email(email, otp, subject="Verify your admin email - Loukarver")
+            return existing
+            
+        secret_key = await relationship_service.generate_unique_secret_key()
+        
+        new_admin = {
+            "email": email,
+            "password_hash": password_hash,
+            "name": payload.name,
+            "is_verified": False,
+            "otp": otp,
+            "is_aligned": False,
+            "is_admin": True,
+            "partner": None,
+            "secret_key": secret_key,
+            "city_name": "",
+            "relationship_start_date": "",
+            "is_long_distance": False
+        }
+        
+        result = await self.collection.insert_one(new_admin)
+        new_admin["id"] = str(result.inserted_id)
+        
+        send_otp_email(email, otp, subject="Verify your admin email - Loukarver")
+        return new_admin
+
+    async def admin_signin(self, payload: SigninRequest) -> Dict[str, Any]:
+        email = payload.email.lower()
+        user = await self.collection.find_one({"email": email})
+        if not user or not user.get("password_hash") or not verify_password(payload.password, user["password_hash"]):
+            raise ValueError("Invalid email or password")
+            
+        if user.get("is_deleted"):
+            raise ValueError("Your account has been deleted")
+        if user.get("is_blocked"):
+            raise ValueError("Your account has been blocked by an administrator.")
+            
+        if not user.get("is_admin"):
+            raise PermissionError("Access denied: Not an admin")
+            
+        if not user.get("is_verified"):
+            raise PermissionError("Email not verified")
+            
         token_data = {"user_id": str(user["_id"]), "email": email}
         access_token = create_access_token(token_data)
         refresh_token = create_refresh_token(token_data)
@@ -286,7 +446,23 @@ class AuthService:
             user["id"] = str(result.inserted_id)
         else:
             user["id"] = str(user["_id"])
-            if not user.get("is_verified"):
+            if user.get("is_deleted"):
+                secret_key = await relationship_service.generate_unique_secret_key()
+                update_fields = {
+                    "is_deleted": False,
+                    "is_blocked": False,
+                    "is_hidden": False,
+                    "is_verified": True,
+                    "is_aligned": False,
+                    "partner": None,
+                    "secret_key": secret_key,
+                    "city_name": "",
+                    "relationship_start_date": "",
+                    "is_long_distance": False
+                }
+                await self.collection.update_one({"_id": user["_id"]}, {"$set": update_fields})
+                user.update(update_fields)
+            elif not user.get("is_verified"):
                 await self.collection.update_one({"_id": user["_id"]}, {"$set": {"is_verified": True}})
                 user["is_verified"] = True
                 

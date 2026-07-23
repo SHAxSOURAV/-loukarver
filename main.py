@@ -3,10 +3,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 import os
 from app.routers import (
     relationships, auth, checkin, rituals, streak, us, 
-    music, mood, lifecycle, energy, ideas, interactions, watch, secret, dates, thread, milestone, map, notification, vibe_check, vibe_card, play, vibe_dates, vibe_pulse, proposals, legal
+    music, mood, lifecycle, energy, ideas, interactions, watch, secret, dates, thread, milestone, map, notification, vibe_check, vibe_card, play, vibe_dates, vibe_pulse, proposals, legal, upload, faq, admin, reports
 )
 from app.services.streak import streak_system
 from app.services.mood import mood_service
@@ -37,7 +38,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     print(f"  Details: {exc.errors()}")
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors()},
+        content={"detail": jsonable_encoder(exc.errors())},
     )
 
 # CORS configuration
@@ -114,6 +115,10 @@ app.include_router(vibe_dates.router)
 app.include_router(vibe_pulse.router)
 app.include_router(proposals.router)
 app.include_router(legal.router)
+app.include_router(upload.router)
+app.include_router(faq.router)
+app.include_router(admin.router)
+app.include_router(reports.router)
 
 # Mount StaticFiles for uploaded files
 os.makedirs("uploads", exist_ok=True)

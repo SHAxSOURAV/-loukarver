@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.schemas.auth import (
-    SignupRequest, VerifyEmailRequest, ResendOtpRequest,
+    SignupRequest, AdminSignupRequest, VerifyEmailRequest, ResendOtpRequest,
     SigninRequest, OAuthRequest, RefreshRequest,
     ForgotPasswordRequest, ResetPasswordRequest, ChangePasswordRequest,
     TokenResponse, UserMeResponse, DeleteAccountRequest
@@ -57,6 +57,25 @@ async def signup(payload: SignupRequest):
             detail=f"An error occurred during signup: {str(e)}"
         )
 
+@router.post("/admin-signup", status_code=status.HTTP_201_CREATED)
+async def admin_signup(payload: AdminSignupRequest):
+    """Registers a new admin account and triggers an email verification OTP code."""
+    try:
+        await auth_service.admin_signup(payload)
+        return {
+            "success": True,
+            "message": "Admin signup successful! Verification OTP code has been sent to your email."
+        }
+    except PermissionError as pe:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(pe))
+    except ValueError as ve:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred during admin signup: {str(e)}"
+        )
+
 @router.post("/verify-email", response_model=TokenResponse)
 async def verify_email(payload: VerifyEmailRequest):
     """Verifies a user email using the 6-digit OTP code received during signup."""
@@ -92,6 +111,25 @@ async def signin(payload: SigninRequest):
     """Authenticates email and password credentials, returning authorization JWTs."""
     try:
         result = await auth_service.signin(payload)
+        return TokenResponse(
+            access_token=result["access_token"],
+            refresh_token=result["refresh_token"]
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(ve))
+    except PermissionError as pe:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(pe))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred: {str(e)}"
+        )
+
+@router.post("/admin-signin", response_model=TokenResponse)
+async def admin_signin(payload: SigninRequest):
+    """Authenticates admin credentials, returning authorization JWTs."""
+    try:
+        result = await auth_service.admin_signin(payload)
         return TokenResponse(
             access_token=result["access_token"],
             refresh_token=result["refresh_token"]

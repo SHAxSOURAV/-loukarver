@@ -8,6 +8,7 @@ PASSWORD_EXAMPLE = "Secure123"
 class UserUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, description="User's name")
     gender: Optional[str] = Field(None, description="Gender (Male, Female, Not to say)")
+    profile_photo_url: Optional[str] = Field(None, description="URL of uploaded profile photo")
 
     @model_validator(mode="after")
     def validate_gender_value(self) -> "UserUpdate":
@@ -18,6 +19,12 @@ class UserUpdate(BaseModel):
 class SignupRequest(BaseModel):
     email: str = Field(..., examples=[EMAIL_EXAMPLE], description="User's email address")
     password: str = Field(..., examples=[PASSWORD_EXAMPLE], description="Password (min 6 characters)")
+
+class AdminSignupRequest(BaseModel):
+    name: str = Field(..., min_length=2, description="Admin's full name")
+    email: str = Field(..., examples=[EMAIL_EXAMPLE], description="Admin's email address")
+    password: str = Field(..., examples=[PASSWORD_EXAMPLE], description="Password (min 6 characters)")
+    admin_secret: str = Field(..., description="Secret key to create an Admin account")
 
 class VerifyEmailRequest(BaseModel):
     email: str = Field(..., examples=[EMAIL_EXAMPLE], description="Registered email address")
@@ -63,12 +70,16 @@ class UserMeResponse(BaseModel):
     name: Optional[str] = None
     is_verified: bool = False
     is_aligned: bool = False
+    is_admin: bool = False
     partner: Optional[Dict[str, Any]] = None
     secret_key: Optional[str] = None
     profile_photo_url: Optional[str] = None
     last_active_at: Optional[datetime.datetime] = None
     location_city: Optional[str] = None
     city_name: Optional[str] = None
+    is_blocked: bool = False
+    is_hidden: bool = False
+    is_deleted: bool = False
 
     model_config = {
         "populate_by_name": True
