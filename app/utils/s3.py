@@ -15,32 +15,16 @@ def get_s3_client():
         region_name=settings.AWS_REGION
     )
 
+from app.services.s3_utils import s3_service
+
 async def upload_file_to_s3(file_obj, filename: str, content_type: str) -> str:
     """Uploads a file to AWS S3 and returns the public URL."""
-    s3_client = get_s3_client()
-    if not s3_client:
-        # Fallback to local upload if S3 not configured
-        local_path = f"uploads/{uuid.uuid4().hex}_{filename}"
-        os.makedirs("uploads", exist_ok=True)
-        with open(local_path, "wb") as f:
-            f.write(file_obj.read())
-        # Not a complete URL, but works for fallback testing
-        return f"/{local_path}"
-        
-    # Generate unique filename
-    unique_filename = f"{uuid.uuid4().hex}_{filename}"
-    
-    try:
-        s3_client.upload_fileobj(
-            file_obj,
-            settings.AWS_S3_BUCKET_NAME,
-            unique_filename,
-            ExtraArgs={'ContentType': content_type}
-        )
-        
-        # Build URL
-        s3_url = f"https://{settings.AWS_S3_BUCKET_NAME}.s3.{settings.AWS_REGION}.amazonaws.com/{unique_filename}"
-        return s3_url
-    except ClientError as e:
-        print(f"S3 Upload Error: {e}")
-        raise ValueError("Failed to upload file to S3")
+    if s3_service.s3_client:
+        if hasattr(file_obj, "read"):
+            file_bytes = file_obj.read()
+        else:
+            file_bytes = file_obj
+        return await s3_service.upload_bytes(file_bytes, filename=filename, content_type=content_type, folder="uploads")
+    else:
+        raise ValueError("AWS S3 is not configured.")
+
