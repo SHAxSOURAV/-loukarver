@@ -126,7 +126,7 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 @app.get("/")
 def root():
-    return {"message": "loukarver API is running"}
+    return {"message": "Aligned Backend is Running.."}
 
 @app.websocket("/ws/notifications/{user_id}")
 async def websocket_notifications(websocket: WebSocket, user_id: str):

@@ -3,6 +3,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     PROJECT_NAME: str = "loukarver"
     API_V1_STR: str = "/api"
+    APP_HOST: str = "0.0.0.0"
+    APP_PORT: int = 8000
     MONGO_URL: str = ""
     MONGO_DB_NAME: str = "loukarver"
     
@@ -26,13 +28,7 @@ class Settings(BaseSettings):
     YOUTUBE_REDIRECT_URI: str = ""
     YOUTUBE_API_KEY: str = ""
     
-    # Gemini Integration
-    GEMINI_API_KEY: str = ""
-    
-    # Local LLM Integration
-    USE_LOCAL_LLM: bool = False
-    LOCAL_LLM_URL: str = "http://127.0.0.1:1234/v1/chat/completions"
-    LOCAL_LLM_MODEL: str = "llama-3.2-3b-instruct"
+
     
     # OneSignal Integration
     ONESIGNAL_APP_ID: str = ""
