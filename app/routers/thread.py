@@ -30,13 +30,19 @@ async def get_messages(
     return messages
 
 @router.delete("/{message_id}", response_model=GenericResponse)
-async def delete_message(message_id: str, current_user: dict = Depends(get_current_user)):
-    """Delete a message you sent to the thread."""
+async def delete_message(
+    message_id: str,
+    mode: str = Query("everyone", description="Deletion mode: 'everyone' (for own messages) or 'me' (for any message)"),
+    current_user: dict = Depends(get_current_user)
+):
+    """Delete a message for yourself ('me') or for everyone ('everyone')."""
     try:
-        success = await thread_service.delete_message(current_user["id"], message_id)
+        success = await thread_service.delete_message(current_user["id"], message_id, mode=mode)
         if not success:
             raise HTTPException(status_code=404, detail="Message not found or permission denied.")
-        return GenericResponse(success=True, message="Message deleted.")
+        return GenericResponse(success=True, message=f"Message deleted for {mode}.")
+    except ValueError as ve:
+        raise HTTPException(status_code=403, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

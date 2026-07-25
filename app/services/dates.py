@@ -13,7 +13,7 @@ from app.schemas.dates import (
 )
 from app.core.websocket import ws_manager
 from app.services.notification import notification_service
-from app.schemas.notification import NotificationCreate, NotificationType
+from app.schemas.notification import NotificationCreate, NotificationType, PresenceCreate
 
 def parse_date_time(date_str: str, time_str: str, tz_str: str) -> datetime:
     """Parses date and time strings into a UTC datetime object."""
@@ -90,6 +90,13 @@ class DateService:
                     type=NotificationType.SYSTEM
                 )
             )
+            try:
+                await notification_service.log_presence(
+                    user_id,
+                    PresenceCreate(timezone=payload.timezone)
+                )
+            except Exception as presence_err:
+                print(f"Failed to log presence on create_date: {presence_err}")
         except Exception as e:
             print(f"Failed to notify partner on create_date: {e}")
 

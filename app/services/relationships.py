@@ -128,6 +128,38 @@ class RelationshipService:
             }
         )
         
+        # Broadcast real-time WebSocket event to BOTH users
+        try:
+            from app.core.websocket import ws_manager
+            await ws_manager.broadcast_to_user(
+                user_id=str(initiator["_id"]),
+                message={"type": "ALIGNMENT_BONDED", "partner_name": partner.get("name", "Partner")}
+            )
+            await ws_manager.broadcast_to_user(
+                user_id=str(partner["_id"]),
+                message={"type": "ALIGNMENT_BONDED", "partner_name": initiator.get("name", "Partner")}
+            )
+        except Exception as e:
+            print("Failed to send alignment ws:", e)
+
+        # Send push notification to partner
+        try:
+            from app.services.notification import notification_service
+            from app.schemas.notification import NotificationCreate, NotificationType
+            await notification_service.schedule_notification(
+                sender_id=user_id,
+                payload=NotificationCreate(
+                    recipient_id=str(partner["_id"]),
+                    title="Connected!",
+                    message=f"You are now aligned with {initiator.get('name', 'your partner')}!",
+                    type=NotificationType.STATE_UPDATE,
+                    scheduled_for=datetime.now(timezone.utc),
+                    timezone="UTC"
+                )
+            )
+        except Exception as e:
+            print("Failed to send alignment push notification:", e)
+
         # Fetch and return updated initiator data
         updated_initiator = await self.collection.find_one({"_id": initiator["_id"]})
         if updated_initiator and "_id" in updated_initiator:

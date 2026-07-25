@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Union
 from datetime import datetime
 from enum import Enum
@@ -36,6 +36,12 @@ class ThreadMessageBase(BaseModel):
 class LetterCreate(ThreadMessageBase):
     text: str
 
+    @field_validator('text')
+    def validate_text(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Letter text cannot be empty or whitespace.')
+        return v.strip()
+
 class VoiceCreate(ThreadMessageBase):
     pass # File handled via UploadFile
 
@@ -58,18 +64,40 @@ class PromptAskCreate(ThreadMessageBase):
     question_text: str
     type: str
 
+    @field_validator('question_text')
+    def validate_question(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Question text cannot be empty or whitespace.')
+        return v.strip()
+
 class PromptReplyUpdate(BaseModel):
     answer: str
     timezone: str = "UTC"
 
+    @field_validator('answer')
+    def validate_answer(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Reply answer cannot be empty or whitespace.')
+        return v.strip()
+
 class AppreciationCreate(ThreadMessageBase):
     text: str
+
+    @field_validator('text')
+    def validate_text(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Appreciation text cannot be empty or whitespace.')
+        return v.strip()
 
 class CheckInThreadCreate(ThreadMessageBase):
     answer_1: str
     answer_2: str
     answer_3: str
     date: str # mm.dd.yyyy
+
+    @field_validator('answer_1', 'answer_2', 'answer_3', mode='after')
+    def clean_answers(cls, v):
+        return v.strip() if v else ""
 
 class LetterUpdate(BaseModel):
     text: Optional[str] = None

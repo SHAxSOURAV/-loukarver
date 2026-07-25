@@ -50,7 +50,12 @@ class NotificationService:
         
         # Send OneSignal Push Notification
         import asyncio
-        asyncio.create_task(self.send_onesignal_push(payload.recipient_id, new_doc.get("title", ""), new_doc.get("message", "")))
+        asyncio.create_task(self.send_onesignal_push(
+            payload.recipient_id,
+            new_doc.get("title", ""),
+            new_doc.get("message", ""),
+            custom_data=new_doc.get("metadata")
+        ))
         
         return await self._map_notification(new_doc, payload.timezone)
 

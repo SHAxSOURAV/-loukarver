@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.schemas.vibe_dates import VibeDateCreate, VibeDateUpdate, VibeDateRespondRequest, DateStatus
 from app.services.vibe_check import vibe_check_service
 from app.services.notification import notification_service
-from app.schemas.notification import NotificationCreate, NotificationType
+from app.schemas.notification import NotificationCreate, NotificationType, PresenceCreate
 
 class VibeDateService:
     def __init__(self) -> None:
@@ -78,6 +78,14 @@ class VibeDateService:
             metadata={"date_id": str(result.inserted_id)}
         )
         await notification_service.schedule_notification(user_id, notif)
+        
+        try:
+            await notification_service.log_presence(
+                user_id,
+                PresenceCreate(timezone=payload.timezone)
+            )
+        except Exception as presence_err:
+            print(f"Failed to log presence on propose_vibe_date: {presence_err}")
         
         return await self._map_date(date_doc, payload.timezone)
 

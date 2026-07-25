@@ -135,15 +135,16 @@ async def break_alignment(payload: BreakAlignmentRequest, current_user: dict = D
         from bson import ObjectId
         from app.services.auth import verify_password
         
-        # Verify password
         user_record = await relationship_service.collection.find_one({"_id": ObjectId(current_user["id"])})
         if not user_record:
             raise ValueError("User not found")
             
+        # Verify password strictly
         hashed_password = user_record.get("password_hash")
         if not hashed_password or not verify_password(payload.password, hashed_password):
             raise ValueError("Incorrect password.")
             
+        partner_id = user_record.get("partner", {}).get("user_id")
         updated_user = await relationship_service.break_alignment(current_user["id"])
         
         # Also auto-demote the vibe ladder for both users
@@ -152,7 +153,6 @@ async def break_alignment(payload: BreakAlignmentRequest, current_user: dict = D
         from datetime import datetime, timezone
         
         now = datetime.now(timezone.utc)
-        partner_id = user_record.get("partner", {}).get("user_id")
         
         if partner_id:
             # 1. Demote current user's pulse
@@ -175,10 +175,12 @@ async def break_alignment(payload: BreakAlignmentRequest, current_user: dict = D
                     }}
                 )
                 
-            # Broadcast update to partner so their screen refreshes
+            # Broadcast real-time update to both users so their screens auto-reload
             try:
                 from app.core.websocket import ws_manager
                 await ws_manager.broadcast_to_user(partner_id, {"type": "PULSE_UPDATED"})
+                await ws_manager.broadcast_to_user(partner_id, {"type": "ALIGNMENT_BROKEN"})
+                await ws_manager.broadcast_to_user(current_user["id"], {"type": "ALIGNMENT_BROKEN"})
             except Exception:
                 pass
         
@@ -203,22 +205,24 @@ async def upload_photo(file: UploadFile = File(...), current_user: dict = Depend
     """Uploads a profile photo for the authenticated user."""
     try:
         contents = await file.read()
-        nparr = np.frombuffer(contents, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        file_bytes = contents
+        content_type = file.content_type or "image/jpeg"
         
-        if img is None:
-            raise ValueError("Invalid image file uploaded.")
+        try:
+            nparr = np.frombuffer(contents, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if img is not None:
+                # Resize to 256x256 using INTER_AREA for downsampling
+                resized = cv2.resize(img, (256, 256), interpolation=cv2.INTER_AREA)
+                is_success, buffer = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+                if is_success:
+                    file_bytes = buffer.tobytes()
+                    content_type = "image/jpeg"
+        except Exception as img_err:
+            print(f"[Upload Photo Warning] Image optimization skipped due to format: {img_err}")
             
-        # Resize to 256x256 using INTER_AREA for downsampling
-        resized = cv2.resize(img, (256, 256), interpolation=cv2.INTER_AREA)
-
-        # Save as optimized JPEG to memory
-        is_success, buffer = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
-        if not is_success:
-            raise ValueError("Failed to encode image")
-            
-        file_bytes = buffer.tobytes()
-        file_url = await s3_service.upload_bytes(file_bytes, filename=f"{uuid.uuid4().hex}.jpg", content_type="image/jpeg", folder="profiles")
+        filename = f"{uuid.uuid4().hex}.jpg" if content_type == "image/jpeg" else (file.filename or f"{uuid.uuid4().hex}.bin")
+        file_url = await s3_service.upload_bytes(file_bytes, filename=filename, content_type=content_type, folder="profiles")
             
         updated = await relationship_service.update_profile_photo(current_user["id"], file_url)
         return {"success": True, "message": "Photo uploaded successfully", "data": updated}
@@ -243,10 +247,11 @@ async def get_photo(user_id: str, current_user: dict = Depends(get_current_user)
             from fastapi.responses import RedirectResponse
             return RedirectResponse(url=file_path)
             
-        if not os.path.exists(file_path):
+        clean_path = file_path.lstrip("/")
+        if not os.path.exists(clean_path):
             raise HTTPException(status_code=404, detail="Photo not found.")
             
-        return FileResponse(file_path)
+        return FileResponse(clean_path)
     except HTTPException:
         raise
     except Exception as e:

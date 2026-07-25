@@ -134,6 +134,6 @@ async def websocket_notifications(websocket: WebSocket, user_id: str):
     try:
         while True:
             # We don't expect the client to send much, but we must receive to keep the connection alive
-            data = await websocket.receive_text()
-    except WebSocketDisconnect:
-        ws_manager.disconnect(user_id)
+            await websocket.receive_text()
+    except Exception:
+        ws_manager.disconnect(user_id, websocket)

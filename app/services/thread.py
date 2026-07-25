@@ -70,23 +70,33 @@ class ThreadService:
         # 1. Websocket
         try:
             from app.core.websocket import ws_manager
-            await ws_manager.send_personal_message(
-                message={"type": "new_thread_message", "message": message},
-                user_id=partner_id
+            await ws_manager.broadcast_to_user(
+                user_id=partner_id,
+                message={"type": "THREAD_UPDATED", "message": message}
             )
+            if user_id:
+                await ws_manager.broadcast_to_user(
+                    user_id=user_id,
+                    message={"type": "THREAD_UPDATED", "message": message}
+                )
         except Exception as e:
             print(f"Failed to send thread websocket: {e}")
 
-        # 2. Push Notification
+        # 2. Push Notification & Presence History
         try:
             from app.services.notification import notification_service
             from app.schemas.notification import NotificationCreate, NotificationType
+            cat_str = str(message.get("category", "")).lower()
             notif = NotificationCreate(
                 title=title,
                 message=body,
                 type=NotificationType.THREAD_MESSAGE,
                 recipient_id=partner_id,
-                metadata={"message_id": message.get("id"), "category": message.get("category")}
+                metadata={
+                    "message_id": message.get("id"),
+                    "category": cat_str,
+                    "screen": "Thread"
+                }
             )
             await notification_service.schedule_notification(user_id, notif)
         except Exception as e:
@@ -109,12 +119,14 @@ class ThreadService:
     async def post_letter(self, user_id: str, payload: LetterCreate) -> Dict[str, Any]:
         partner_id = await self._get_partner_id(user_id)
         if not partner_id: raise ValueError("Partner alignment required.")
+        if not payload.text or not payload.text.strip():
+            raise ValueError("Letter content cannot be empty.")
         
         new_doc = {
             "category": ThreadCategory.LETTER,
             "creator_id": user_id,
             "partner_id": partner_id,
-            "content": {"text": payload.text},
+            "content": {"text": payload.text.strip()},
             "created_at": datetime.now(timezone.utc),
             "is_sent": True,
             "is_delivered": False,
@@ -124,7 +136,9 @@ class ThreadService:
         new_doc["id"] = str(result.inserted_id)
         mapped = await self._map_message(new_doc, payload.timezone, user_id)
         
-        await self._notify_partner(user_id, partner_id, mapped, "New Letter", "Your partner left you a letter in the Thread.")
+        sender_name = mapped.get("sender_name", "Your partner")
+        snippet = payload.text.strip()[:100]
+        await self._notify_partner(user_id, partner_id, mapped, f"Letter from {sender_name}", f'"{snippet}"')
         return mapped
 
     async def post_voice(self, user_id: str, file: UploadFile, timezone_str: str = "UTC") -> Dict[str, Any]:
@@ -147,7 +161,8 @@ class ThreadService:
         new_doc["id"] = str(result.inserted_id)
         mapped = await self._map_message(new_doc, timezone_str, user_id)
         
-        await self._notify_partner(user_id, partner_id, mapped, "New Voice Message", "Your partner sent you a voice message in the Thread.")
+        sender_name = mapped.get("sender_name", "Your partner")
+        await self._notify_partner(user_id, partner_id, mapped, f"Voice Note from {sender_name}", "🔊 Left you a voice message in Thread.")
         return mapped
 
     async def post_voice_base64(self, user_id: str, payload: "VoiceBase64Create") -> Dict[str, Any]:
@@ -155,6 +170,7 @@ class ThreadService:
         partner_id = await self._get_partner_id(user_id)
         if not partner_id: raise ValueError("Partner alignment required.")
         
+        file_bytes = base64.b64decode(payload.file_base64)
         file_url = await s3_service.upload_bytes(file_bytes, payload.filename, payload.content_type, folder="voice")
             
         new_doc = {
@@ -171,7 +187,8 @@ class ThreadService:
         new_doc["id"] = str(result.inserted_id)
         mapped = await self._map_message(new_doc, payload.timezone, user_id)
         
-        await self._notify_partner(user_id, partner_id, mapped, "New Voice Message", "Your partner sent you a voice message in the Thread.")
+        sender_name = mapped.get("sender_name", "Your partner")
+        await self._notify_partner(user_id, partner_id, mapped, f"Voice Note from {sender_name}", "🔊 Left you a voice message in Thread.")
         return mapped
 
     async def post_photo(self, user_id: str, file: UploadFile, caption: str, timezone_str: str = "UTC") -> Dict[str, Any]:
@@ -194,7 +211,9 @@ class ThreadService:
         new_doc["id"] = str(result.inserted_id)
         mapped = await self._map_message(new_doc, timezone_str, user_id)
         
-        await self._notify_partner(user_id, partner_id, mapped, "New Photo", "Your partner shared a photo in the Thread.")
+        sender_name = mapped.get("sender_name", "Your partner")
+        body_text = caption.strip() if caption and caption.strip() else "Shared a moment in Thread."
+        await self._notify_partner(user_id, partner_id, mapped, f"Photo from {sender_name}", body_text)
         return mapped
 
     async def post_photo_base64(self, user_id: str, payload: "PhotoBase64Create") -> Dict[str, Any]:
@@ -202,6 +221,7 @@ class ThreadService:
         partner_id = await self._get_partner_id(user_id)
         if not partner_id: raise ValueError("Partner alignment required.")
         
+        file_bytes = base64.b64decode(payload.file_base64)
         file_url = await s3_service.upload_bytes(file_bytes, payload.filename, payload.content_type, folder="photo")
             
         new_doc = {
@@ -218,12 +238,16 @@ class ThreadService:
         new_doc["id"] = str(result.inserted_id)
         mapped = await self._map_message(new_doc, payload.timezone, user_id)
         
-        await self._notify_partner(user_id, partner_id, mapped, "New Photo", "Your partner sent you a photo in the Thread.")
+        sender_name = mapped.get("sender_name", "Your partner")
+        body_text = payload.caption.strip() if payload.caption and payload.caption.strip() else "Shared a moment in Thread."
+        await self._notify_partner(user_id, partner_id, mapped, f"Photo from {sender_name}", body_text)
         return mapped
 
     async def ask_prompt(self, user_id: str, payload: PromptAskCreate) -> Dict[str, Any]:
         partner_id = await self._get_partner_id(user_id)
         if not partner_id: raise ValueError("Partner alignment required.")
+        if not payload.question_text or not payload.question_text.strip():
+            raise ValueError("Prompt question text cannot be empty.")
         
         new_doc = {
             "category": ThreadCategory.PROMPT,
@@ -231,7 +255,7 @@ class ThreadService:
             "partner_id": partner_id,
             "content": {
                 "prompt_type": payload.prompt_type,
-                "question": payload.question_text,
+                "question": payload.question_text.strip(),
                 "type": payload.type,
                 "answer": None,
                 "status": "asked"
@@ -245,13 +269,16 @@ class ThreadService:
         new_doc["id"] = str(result.inserted_id)
         mapped = await self._map_message(new_doc, payload.timezone, user_id)
         
-        await self._notify_partner(user_id, partner_id, mapped, "New Prompt", "Your partner asked you a question in the Thread.")
+        sender_name = mapped.get("sender_name", "Your partner")
+        await self._notify_partner(user_id, partner_id, mapped, f"New Prompt from {sender_name}", f'"{payload.question_text.strip()}"')
         return mapped
 
     async def reply_to_prompt(self, user_id: str, message_id: str, answer: str, timezone_str: str = "UTC") -> Dict[str, Any]:
         doc = await self.messages_collection.find_one({"_id": ObjectId(message_id), "partner_id": user_id})
         if not doc:
             raise ValueError("Prompt not found or you are not the recipient.")
+        if not answer or not answer.strip():
+            raise ValueError("Reply answer cannot be empty.")
         
         if doc["content"].get("status") == "replied":
             raise ValueError("This prompt has already been replied to.")
@@ -259,7 +286,7 @@ class ThreadService:
         result = await self.messages_collection.find_one_and_update(
             {"_id": ObjectId(message_id)},
             {"$set": {
-                "content.answer": answer,
+                "content.answer": answer.strip(),
                 "content.status": "replied",
                 "is_seen": True, # Replied implies seen
                 "is_delivered": True,
@@ -271,18 +298,21 @@ class ThreadService:
         
         # When user replies to a prompt, notify the creator of the prompt (the partner)
         creator_id = result.get("creator_id")
-        await self._notify_partner(user_id, creator_id, mapped, "Prompt Answered", "Your partner answered your prompt.")
+        sender_name = mapped.get("sender_name", "Your partner")
+        await self._notify_partner(user_id, creator_id, mapped, f"Prompt Answered by {sender_name}", f'"{answer.strip()}"')
         return mapped
 
     async def post_appreciation(self, user_id: str, payload: AppreciationCreate) -> Dict[str, Any]:
         partner_id = await self._get_partner_id(user_id)
         if not partner_id: raise ValueError("Partner alignment required.")
+        if not payload.text or not payload.text.strip():
+            raise ValueError("Appreciation content cannot be empty.")
         
         new_doc = {
             "category": ThreadCategory.APPRECIATION,
             "creator_id": user_id,
             "partner_id": partner_id,
-            "content": {"text": payload.text},
+            "content": {"text": payload.text.strip()},
             "created_at": datetime.now(timezone.utc),
             "is_sent": True,
             "is_delivered": False,
@@ -292,12 +322,16 @@ class ThreadService:
         new_doc["id"] = str(result.inserted_id)
         mapped = await self._map_message(new_doc, payload.timezone, user_id)
         
-        await self._notify_partner(user_id, partner_id, mapped, "New Appreciation", "Your partner posted an appreciation in the Thread.")
+        sender_name = mapped.get("sender_name", "Your partner")
+        snippet = payload.text.strip()[:100]
+        await self._notify_partner(user_id, partner_id, mapped, f"Appreciation from {sender_name}", f'"{snippet}"')
         return mapped
 
     async def post_checkin(self, user_id: str, payload: CheckInThreadCreate) -> Dict[str, Any]:
         partner_id = await self._get_partner_id(user_id)
         if not partner_id: raise ValueError("Partner alignment required.")
+        if not (payload.answer_1 or "").strip() and not (payload.answer_2 or "").strip() and not (payload.answer_3 or "").strip():
+            raise ValueError("At least one check-in answer must be provided.")
         
         new_doc = {
             "category": ThreadCategory.CHECKIN,
@@ -305,9 +339,9 @@ class ThreadService:
             "partner_id": partner_id,
             "content": {
                 "date": payload.date,
-                "answer_1": payload.answer_1,
-                "answer_2": payload.answer_2,
-                "answer_3": payload.answer_3
+                "answer_1": (payload.answer_1 or "").strip(),
+                "answer_2": (payload.answer_2 or "").strip(),
+                "answer_3": (payload.answer_3 or "").strip()
             },
             "created_at": datetime.now(timezone.utc),
             "is_sent": True,
@@ -318,7 +352,8 @@ class ThreadService:
         new_doc["id"] = str(result.inserted_id)
         mapped = await self._map_message(new_doc, payload.timezone, user_id)
         
-        await self._notify_partner(user_id, partner_id, mapped, "New Check-in", "Your partner posted a check-in in the Thread.")
+        sender_name = mapped.get("sender_name", "Your partner")
+        await self._notify_partner(user_id, partner_id, mapped, f"Daily Check-in from {sender_name}", f"{sender_name} posted their daily check-in.")
         return mapped
 
     async def get_messages(self, user_id: str, page: int = 1, size: int = 20, timezone_str: str = "UTC") -> Tuple[List[Dict[str, Any]], int]:
@@ -326,7 +361,10 @@ class ThreadService:
         user_ids = [user_id]
         if partner_id: user_ids.append(partner_id)
         
-        query = {"creator_id": {"$in": user_ids}}
+        query = {
+            "creator_id": {"$in": user_ids},
+            "deleted_for": {"$ne": user_id}
+        }
         
         # Advanced Feature: Mark received messages as delivered & seen when fetched
         await self.messages_collection.update_many(
@@ -341,27 +379,64 @@ class ThreadService:
         
         return [await self._map_message(d, timezone_str, user_id) for d in docs], total
 
-    async def delete_message(self, user_id: str, message_id: str) -> bool:
-        doc = await self.messages_collection.find_one({"_id": ObjectId(message_id), "creator_id": user_id})
+    async def delete_message(self, user_id: str, message_id: str, mode: str = "everyone") -> bool:
+        partner_id = await self._get_partner_id(user_id)
+        user_ids = [user_id]
+        if partner_id: user_ids.append(partner_id)
+        
+        doc = await self.messages_collection.find_one({"_id": ObjectId(message_id), "creator_id": {"$in": user_ids}})
         if not doc:
             return False
             
-        # Delete file if exists
-        file_url = doc.get("content", {}).get("file_url")
-        if file_url:
-            if "amazonaws.com" in file_url and self.s3_client and self.s3_bucket:
+        is_own_message = (str(doc.get("creator_id")) == user_id)
+
+        if mode == "me":
+            # Delete for You: Hide from current user
+            await self.messages_collection.update_one(
+                {"_id": ObjectId(message_id)},
+                {"$addToSet": {"deleted_for": user_id}}
+            )
+            try:
+                from app.core.websocket import ws_manager
+                await ws_manager.broadcast_to_user(
+                    user_id=user_id,
+                    message={"type": "THREAD_UPDATED", "deleted_id": message_id}
+                )
+            except Exception as e:
+                print("Failed to send thread deletion ws:", e)
+            return True
+
+        elif mode == "everyone":
+            if not is_own_message:
+                raise ValueError("You can only delete your own messages for everyone.")
+
+            file_url = doc.get("content", {}).get("file_url")
+            if file_url:
+                if "amazonaws.com" in file_url:
+                    await s3_service.delete_file(file_url)
+                else:
+                    local_path = file_url.lstrip("/")
+                    if os.path.exists(local_path):
+                        try: os.remove(local_path)
+                        except Exception: pass
+                    
+            result = await self.messages_collection.delete_one({"_id": ObjectId(message_id)})
+            if result.deleted_count > 0:
                 try:
-                    key = file_url.split(".amazonaws.com/")[1]
-                    self.s3_client.delete_object(Bucket=self.s3_bucket, Key=key)
+                    from app.core.websocket import ws_manager
+                    if partner_id:
+                        await ws_manager.broadcast_to_user(
+                            user_id=partner_id,
+                            message={"type": "THREAD_UPDATED", "deleted_id": message_id}
+                        )
+                    await ws_manager.broadcast_to_user(
+                        user_id=user_id,
+                        message={"type": "THREAD_UPDATED", "deleted_id": message_id}
+                    )
                 except Exception as e:
-                    print("S3 Deletion error:", e)
-            else:
-                local_path = file_url.lstrip("/")
-                if os.path.exists(local_path):
-                    os.remove(local_path)
-                
-        result = await self.messages_collection.delete_one({"_id": ObjectId(message_id)})
-        return result.deleted_count > 0
+                    print("Failed to send thread deletion ws:", e)
+                return True
+        return False
 
     async def update_message(self, user_id: str, message_id: str, updates: Dict[str, Any], file: Optional[UploadFile] = None, timezone_str: str = "UTC") -> Dict[str, Any]:
         doc = await self.messages_collection.find_one({"_id": ObjectId(message_id), "creator_id": user_id})
@@ -425,20 +500,46 @@ class ThreadService:
         d["id"] = str(d["_id"]) if "_id" in d else d.get("id")
         if "_id" in d: del d["_id"]
         
-        partner_id = await self._get_partner_id(d["creator_id"])
-        names = await self._get_names(d["creator_id"], partner_id or "")
-        
-        u_name = names.get(current_user_id, "User")
+        creator_str = str(d.get("creator_id", ""))
+        partner_id = await self._get_partner_id(creator_str)
+        partner_str = str(partner_id) if partner_id else None
+
+        user_ids_to_fetch = []
+        for uid in [creator_str, partner_str, str(current_user_id)]:
+            if uid:
+                user_ids_to_fetch.append(uid)
+                if ObjectId.is_valid(uid):
+                    user_ids_to_fetch.append(ObjectId(uid))
+
+        names = {}
+        photos = {}
+        if user_ids_to_fetch:
+            async for user in self.users.find({"_id": {"$in": user_ids_to_fetch}}):
+                uid_str = str(user["_id"])
+                names[uid_str] = user.get("name", "User")
+                
+                photo = user.get("profile_photo_url") or user.get("photo_url") or user.get("avatar")
+                if not photo and user.get("partner"):
+                    photo = user["partner"].get("profile_photo_url")
+                if photo:
+                    photos[uid_str] = photo
+                if user.get("partner") and user["partner"].get("user_id"):
+                    p_uid = str(user["partner"]["user_id"])
+                    if p_uid not in photos and user["partner"].get("profile_photo_url"):
+                        photos[p_uid] = user["partner"]["profile_photo_url"]
+
+        u_name = names.get(str(current_user_id), "User")
         p_name = "Partner"
         for uid, name in names.items():
-            if uid != current_user_id:
+            if uid != str(current_user_id):
                 p_name = name
                 break
 
         d["user_name"] = u_name
         d["partner_name"] = p_name
-        d["sender_name"] = names.get(d["creator_id"], "User")
-        d["sender_id"] = d["creator_id"]
+        d["sender_name"] = names.get(creator_str, "User")
+        d["sender_photo"] = photos.get(creator_str)
+        d["sender_id"] = creator_str
         
         d["is_sent"] = d.get("is_sent", True)
         d["is_delivered"] = d.get("is_delivered", False)
