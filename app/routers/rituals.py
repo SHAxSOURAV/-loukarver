@@ -39,7 +39,7 @@ async def complete_ritual(
 @router.get("/history", response_model=RitualHistoryResponse, status_code=status.HTTP_200_OK)
 async def get_history(page: int = Query(1, ge=1), limit: int = Query(30, ge=1), timezone: str = Query("UTC"), current_user: dict = Depends(get_current_user)):
     try:
-        result = await streak_system.get_history(current_user["id"], page, limit, timezone)
+        result = await streak_system.get_history(current_user["id"], page, limit, timezone, user_doc=current_user)
         return RitualHistoryResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -47,7 +47,7 @@ async def get_history(page: int = Query(1, ge=1), limit: int = Query(30, ge=1), 
 @router.get("/partner-history", response_model=RitualHistoryResponse, status_code=status.HTTP_200_OK)
 async def get_partner_history(page: int = Query(1, ge=1), limit: int = Query(30, ge=1), timezone: str = Query("UTC"), current_user: dict = Depends(get_current_user)):
     try:
-        result = await streak_system.get_partner_history(current_user["id"], page, limit, timezone)
+        result = await streak_system.get_partner_history(current_user["id"], page, limit, timezone, user_doc=current_user)
         return RitualHistoryResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

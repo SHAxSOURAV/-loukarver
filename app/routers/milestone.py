@@ -30,7 +30,7 @@ async def list_milestones(
 ):
     """List all couple milestones. Private ones are masked unless correct PIN provided."""
     try:
-        data, total = await milestone_service.get_milestones(current_user["id"], page, size, pin, timezone)
+        data, total = await milestone_service.get_milestones(current_user["id"], page, size, pin, timezone, user_doc=current_user)
         return MilestonePaginatedResponse(success=True, data=data, total=total, page=page, size=size)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -1,3 +1,4 @@
+import asyncio
 from typing import Dict, Any, List, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
 from app.core.db import get_client, get_db
@@ -22,10 +23,13 @@ class VibePulseService:
         self.flags = self.db["vibe_flags"]
 
     async def init_indexes(self):
-        await self.pulses.create_index([("user_id", 1), ("partner_id", 1)], unique=True)
-        await self.pulses.create_index("user_id")
-        await self.flags.create_index([("user_id", 1), ("partner_id", 1)])
-        await self.flags.create_index("partner_id")
+        try:
+            await self.pulses.create_index([("user_id", 1), ("partner_id", 1)], unique=True)
+            await self.pulses.create_index("user_id")
+            await self.flags.create_index([("user_id", 1), ("partner_id", 1)])
+            await self.flags.create_index("partner_id")
+        except Exception as e:
+            print(f"Error initializing vibe pulse indexes: {e}")
 
     # --- Flag Methods ---
 
@@ -273,45 +277,82 @@ class VibePulseService:
         return status
 
     async def get_pulse_status(self, user_id: str, partner_id: str) -> Dict[str, Any]:
-        # Get my status for them — auto-start at Talking if no record exists
-        my_pulse = await self.pulses.find_one({"user_id": user_id, "partner_id": partner_id})
+        # Concurrently fetch my_pulse, their_pulse, and partner_doc
+        my_pulse, their_pulse, partner_doc = await asyncio.gather(
+            self.pulses.find_one({"user_id": user_id, "partner_id": partner_id}),
+            self.pulses.find_one({"user_id": partner_id, "partner_id": user_id}),
+            self.db["vibe_check_profiles"].find_one({"user_id": partner_id}, {"name": 1})
+        )
+
+        now = datetime.now(timezone.utc)
         if not my_pulse:
             # Auto-create a Talking pulse for this user+partner pair
-            now = datetime.now(timezone.utc)
             await self.pulses.update_one(
                 {"user_id": user_id, "partner_id": partner_id},
                 {"$set": {"status": PulseStatus.TALKING, "updated_at": now}},
                 upsert=True
             )
-            my_pulse = await self.pulses.find_one({"user_id": user_id, "partner_id": partner_id})
+            my_status = PulseStatus.TALKING
+            my_updated_at = now
+        else:
+            my_status = my_pulse.get("status", PulseStatus.NONE)
+            my_updated_at = my_pulse.get("updated_at", now)
 
-        my_status = my_pulse["status"] if my_pulse else PulseStatus.NONE
-
-        # Get their status for me
-        their_pulse = await self.pulses.find_one({"user_id": partner_id, "partner_id": user_id})
-        their_status = their_pulse["status"] if their_pulse else PulseStatus.NONE
-
-        partner_profile = await vibe_check_service.get_profile(partner_id)
-        
+        their_status = their_pulse.get("status", PulseStatus.NONE) if their_pulse else PulseStatus.NONE
         is_aligned_matched = (my_status == PulseStatus.ALIGNED and their_status == PulseStatus.ALIGNED)
 
         return {
             "partner_id": partner_id,
-            "partner_name": partner_profile["name"] if partner_profile else "Unknown",
+            "partner_name": partner_doc.get("name", "Unknown") if partner_doc else "Unknown",
             "my_status": my_status,
             "partner_status": their_status,
             "is_aligned_matched": is_aligned_matched,
-            "updated_at": my_pulse["updated_at"] if my_pulse else datetime.now(timezone.utc)
+            "updated_at": my_updated_at
         }
 
     async def get_all_pulses(self, user_id: str) -> List[Dict[str, Any]]:
-        # Fetch all my pulses
         cursor = self.pulses.find({"user_id": user_id})
-        my_pulses = await cursor.to_list(length=None)
+        my_pulses = await cursor.to_list(length=100)
+        if not my_pulses:
+            return []
+
+        partner_ids = [p["partner_id"] for p in my_pulses if "partner_id" in p]
+        if not partner_ids:
+            return []
+
+        # Batch fetch their pulses and partner profiles concurrently
+        their_pulses_cursor = self.pulses.find({"user_id": {"$in": partner_ids}, "partner_id": user_id})
+        profiles_cursor = self.db["vibe_check_profiles"].find({"user_id": {"$in": partner_ids}}, {"name": 1, "user_id": 1})
         
+        their_pulses_docs, profiles_docs = await asyncio.gather(
+            their_pulses_cursor.to_list(length=len(partner_ids) + 10),
+            profiles_cursor.to_list(length=len(partner_ids) + 10)
+        )
+        
+        their_pulses_map = {p["user_id"]: p for p in their_pulses_docs}
+        profiles_map = {p["user_id"]: p.get("name", "Unknown") for p in profiles_docs}
+        
+        now = datetime.now(timezone.utc)
         results = []
         for p in my_pulses:
-            results.append(await self.get_pulse_status(user_id, p["partner_id"]))
+            partner_id = p["partner_id"]
+            their_pulse = their_pulses_map.get(partner_id)
+            partner_name = profiles_map.get(partner_id, "Unknown")
+            
+            my_status = p.get("status", PulseStatus.NONE)
+            my_updated_at = p.get("updated_at", now)
+            their_status = their_pulse.get("status", PulseStatus.NONE) if their_pulse else PulseStatus.NONE
+            is_aligned_matched = (my_status == PulseStatus.ALIGNED and their_status == PulseStatus.ALIGNED)
+            
+            results.append({
+                "partner_id": partner_id,
+                "partner_name": partner_name,
+                "my_status": my_status,
+                "partner_status": their_status,
+                "is_aligned_matched": is_aligned_matched,
+                "updated_at": my_updated_at
+            })
+            
         return results
 
     async def check_aligned_connection(self, user_id: str, partner_id: str) -> Dict[str, Any]:

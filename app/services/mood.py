@@ -18,6 +18,16 @@ class MoodService:
         self.mood_history = self.db["mood_history"]
         self.users = self.db["users"]
 
+    async def init_indexes(self):
+        try:
+            await self.mood_list.create_index([("couple_id", 1), ("is_active", 1), ("order_index", 1)])
+            await self.mood_list.create_index([("is_active", 1), ("order_index", 1)])
+            await self.mood_list.create_index("couple_id")
+            await self.mood_history.create_index([("couple_id", 1), ("created_at", -1)])
+            await self.mood_history.create_index([("user_id", 1), ("created_at", -1)])
+        except Exception as e:
+            print(f"Error initializing mood indexes: {e}")
+
     async def seed_defaults(self):
         count = await self.mood_list.count_documents({"couple_id": {"$exists": False}})
         if count == 0:
@@ -33,31 +43,16 @@ class MoodService:
 
     # --- Scoping & Helper Functions ---
 
-    async def _get_couple_id(self, user_id: str) -> str:
-        user = await self.users.find_one({"_id": ObjectId(user_id)})
+    async def _get_couple_id(self, user_id: str, user_doc: Optional[Dict[str, Any]] = None) -> str:
+        if user_doc:
+            user = user_doc
+        else:
+            user = await self.users.find_one({"_id": ObjectId(user_id)}, {"partner.user_id": 1, "is_aligned": 1})
         if not user:
             return user_id
         if user.get("is_aligned") and user.get("partner"):
             partner_id = user["partner"]["user_id"]
-            couple_id = "_".join(sorted([user_id, partner_id]))
-            
-            # Migration check: if they just aligned, check if a custom list exists for couple_id
-            couple_exists = await self.mood_list.count_documents({"couple_id": couple_id})
-            if couple_exists == 0:
-                # Check if initiator (user_id) has a custom list
-                user_exists = await self.mood_list.count_documents({"couple_id": user_id})
-                if user_exists > 0:
-                    await self.mood_list.update_many({"couple_id": user_id}, {"$set": {"couple_id": couple_id}})
-                
-                # Check if partner has a custom list
-                partner_exists = await self.mood_list.count_documents({"couple_id": partner_id})
-                if partner_exists > 0:
-                    if user_exists > 0:
-                        # Merge by deleting partner's list to avoid duplicate records
-                        await self.mood_list.delete_many({"couple_id": partner_id})
-                    else:
-                        await self.mood_list.update_many({"couple_id": partner_id}, {"$set": {"couple_id": couple_id}})
-            return couple_id
+            return "_".join(sorted([user_id, partner_id]))
         return user_id
 
     async def _ensure_custom_mood_list(self, couple_id: str) -> None:
@@ -121,15 +116,14 @@ class MoodService:
 
     # --- Mood List CRUD ---
     
-    async def get_mood_list(self, user_id: str) -> List[Dict[str, Any]]:
-        couple_id = await self._get_couple_id(user_id)
-        count = await self.mood_list.count_documents({"couple_id": couple_id, "is_active": True})
-        if count > 0:
-            cursor = self.mood_list.find({"couple_id": couple_id, "is_active": True}).sort("order_index", 1)
-        else:
-            cursor = self.mood_list.find({"couple_id": {"$exists": False}, "is_active": True}).sort("order_index", 1)
-            
+    async def get_mood_list(self, user_id: str, user_doc: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        couple_id = await self._get_couple_id(user_id, user_doc=user_doc)
+        cursor = self.mood_list.find({"couple_id": couple_id, "is_active": True}).sort("order_index", 1)
         docs = await cursor.to_list(length=None)
+        if not docs:
+            cursor = self.mood_list.find({"couple_id": {"$exists": False}, "is_active": True}).sort("order_index", 1)
+            docs = await cursor.to_list(length=None)
+            
         results = []
         for d in docs:
             d["id"] = str(d["_id"])

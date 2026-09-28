@@ -12,6 +12,8 @@ from app.schemas.milestone import (
     MilestoneCreate, MilestoneUpdate, MilestoneStepCreate, MilestoneStepUpdate
 )
 
+import asyncio
+
 class MilestoneService:
     def __init__(self) -> None:
         self.client = get_client()
@@ -20,11 +22,16 @@ class MilestoneService:
         self.users = self.db["users"]
 
     async def init_indexes(self):
-        await self.milestones_collection.create_index([("creator_id", 1), ("partner_id", 1)])
-        await self.milestones_collection.create_index("created_at")
+        try:
+            await self.milestones_collection.create_index([("creator_id", 1), ("created_at", -1)])
+            await self.milestones_collection.create_index([("partner_id", 1), ("created_at", -1)])
+            await self.milestones_collection.create_index([("creator_id", 1), ("partner_id", 1)])
+            await self.milestones_collection.create_index("created_at")
+        except Exception as e:
+            print(f"Index initialization note in milestone: {e}")
 
     async def _get_partner_id(self, user_id: str) -> Optional[str]:
-        user = await self.users.find_one({"_id": ObjectId(user_id)})
+        user = await self.users.find_one({"_id": ObjectId(user_id)}, {"partner.user_id": 1, "is_aligned": 1})
         if user and user.get("is_aligned") and user.get("partner"):
             return user["partner"]["user_id"]
         return None
@@ -63,18 +70,27 @@ class MilestoneService:
 
         return await self._map_milestone(new_doc, user_timezone=payload.timezone)
 
-    async def get_milestones(self, user_id: str, page: int = 1, size: int = 20, pin: Optional[str] = None, user_timezone: str = "UTC") -> Tuple[List[Dict[str, Any]], int]:
-        partner_id = await self._get_partner_id(user_id)
+    async def get_milestones(self, user_id: str, page: int = 1, size: int = 20, pin: Optional[str] = None, user_timezone: str = "UTC", user_doc: Optional[Dict[str, Any]] = None) -> Tuple[List[Dict[str, Any]], int]:
         query = {"$or": [{"creator_id": user_id}, {"partner_id": user_id}]}
         
         skip = (page - 1) * size
         cursor = self.milestones_collection.find(query).sort("created_at", -1).skip(skip).limit(size)
-        docs = await cursor.to_list(length=None)
-        total = await self.milestones_collection.count_documents(query)
+        
+        partner_id = user_doc.get("partner", {}).get("user_id") if user_doc and user_doc.get("is_aligned") and user_doc.get("partner") else None
+        if partner_id is None and not user_doc:
+            docs, total, partner_id = await asyncio.gather(
+                cursor.to_list(length=None),
+                self.milestones_collection.count_documents(query),
+                self._get_partner_id(user_id)
+            )
+        else:
+            docs, total = await asyncio.gather(
+                cursor.to_list(length=None),
+                self.milestones_collection.count_documents(query)
+            )
+        names = await self._get_names(user_id, partner_id or "")
 
-        results = []
-        for d in docs:
-            results.append(await self._map_milestone(d, pin, user_timezone))
+        results = [await self._map_milestone(d, pin, user_timezone, names=names) for d in docs]
         return results, total
 
     async def get_milestone_by_id(self, milestone_id: str, user_id: str, pin: Optional[str] = None, user_timezone: str = "UTC") -> Optional[Dict[str, Any]]:
@@ -272,11 +288,19 @@ class MilestoneService:
 
     async def _get_names(self, user_id: str, partner_id: str) -> Dict[str, str]:
         names = {user_id: "User", partner_id: "Partner"}
-        async for user in self.users.find({"_id": {"$in": [ObjectId(user_id), ObjectId(partner_id)]}}):
+        ids = []
+        if user_id:
+            try: ids.append(ObjectId(user_id))
+            except Exception: pass
+        if partner_id:
+            try: ids.append(ObjectId(partner_id))
+            except Exception: pass
+        cursor = self.users.find({"_id": {"$in": ids}}, {"name": 1})
+        async for user in cursor:
             names[str(user["_id"])] = user.get("name", "User")
         return names
 
-    async def _map_milestone(self, d: Dict[str, Any], pin: Optional[str] = None, user_timezone: str = "UTC") -> Dict[str, Any]:
+    async def _map_milestone(self, d: Dict[str, Any], pin: Optional[str] = None, user_timezone: str = "UTC", names: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         d["id"] = str(d["_id"])
         if "_id" in d: del d["_id"]
         
@@ -301,7 +325,8 @@ class MilestoneService:
             d["progress"] = 0.0
             d["is_completed"] = False
         else:
-            names = await self._get_names(creator_id, partner_id)
+            if names is None:
+                names = await self._get_names(creator_id, partner_id)
             # Calculate progress
             steps = d.get("steps", [])
             total = len(steps)

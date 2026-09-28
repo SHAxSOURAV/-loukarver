@@ -21,14 +21,18 @@ class VibeCardService:
         self.vibe_profiles = self.db["vibe_check_profiles"]
         self.vibe_connections = self.db["vibe_check_connections"]
         self.user_streaks = self.db["vibe_user_streaks"]
+        self._anchor_days: Optional[set] = None
 
     async def init_indexes(self):
         await self.user_answers.create_index([("user_id", 1), ("partner_id", 1), ("journey_day", 1)], unique=True)
         await self.cumulative_scores.create_index([("user_id", 1), ("partner_id", 1)], unique=True)
         await self.user_streaks.create_index("user_id", unique=True)
 
-    async def _ensure_current_journey_day(self, user_id: str, partner_id: str, tz_str: str) -> Optional[Dict]:
-        conn = await self.vibe_connections.find_one({"user_id": user_id, "partner_id": partner_id})
+    async def _ensure_current_journey_day(self, user_id: str, partner_id: str, tz_str: str, existing_conn: Optional[Dict] = None) -> Optional[Dict]:
+        if existing_conn is not None:
+            conn = existing_conn
+        else:
+            conn = await self.vibe_connections.find_one({"user_id": user_id, "partner_id": partner_id})
         if not conn or conn.get("status") != "active": return None
 
         from datetime import datetime, timezone
@@ -45,6 +49,10 @@ class VibeCardService:
         logical_today = now_local.date()
         logical_today_str = logical_today.isoformat()
 
+        # If already calculated and updated for today, skip expensive loop
+        if conn.get("last_journey_day_update_date") == logical_today_str:
+            return conn
+
         if conn.get("current_journey_day", 1) >= 90: return conn
         
         current_day = conn.get("current_journey_day", 1)
@@ -58,20 +66,23 @@ class VibeCardService:
         target_day = (logical_today - start_date).days + 1
         
         # 3. Catch-up Logic: Advance day by day if unblocked
+        if self._anchor_days is None:
+            anchor_docs = await self.vibe_90day_cards.find({"is_anchor": True}, {"day": 1}).to_list(length=300)
+            self._anchor_days = {c["day"] for c in anchor_docs}
+
         while current_day < target_day:
             # If explicitly stalled by submit_answers
             if conn.get("stalled_since"):
                 break
                 
-            # Check if current_day has an anchor
-            cursor = self.vibe_90day_cards.find({"day": current_day})
-            cards = await cursor.to_list(length=None)
-            has_anchor = any(c.get("is_anchor", False) for c in cards)
+            has_anchor = current_day in self._anchor_days
             
             if has_anchor:
                 # BOTH users must have submitted answers for this anchor day
-                my_ans = await self.user_answers.find_one({"user_id": user_id, "partner_id": partner_id, "journey_day": current_day})
-                pa_ans = await self.user_answers.find_one({"user_id": partner_id, "partner_id": user_id, "journey_day": current_day})
+                my_ans, pa_ans = await asyncio.gather(
+                    self.user_answers.find_one({"user_id": user_id, "partner_id": partner_id, "journey_day": current_day}),
+                    self.user_answers.find_one({"user_id": partner_id, "partner_id": user_id, "journey_day": current_day})
+                )
                 
                 if not my_ans or not pa_ans:
                     break # Cannot advance past an uncompleted anchor
@@ -79,8 +90,8 @@ class VibeCardService:
             # Unblocked! Advance to next day
             current_day += 1
 
-        # 4. Save progress if advanced
-        if current_day != conn.get("current_journey_day"):
+        # 4. Save progress if advanced or if date not updated yet
+        if current_day != conn.get("current_journey_day") or conn.get("last_journey_day_update_date") != logical_today_str:
             await self.vibe_connections.update_many(
                 {"$or": [
                     {"user_id": user_id, "partner_id": partner_id},
@@ -295,16 +306,18 @@ class VibeCardService:
             "both_finished": both_finished
         }]
 
-    async def get_streak(self, user_id: str, partner_id: Optional[str] = None, user_timezone: str = "UTC") -> Dict[str, Any]:
+    async def get_streak(self, user_id: str, partner_id: Optional[str] = None, user_timezone: str = "UTC", connection: Optional[Dict] = None) -> Dict[str, Any]:
         # Find active connection
-        query = {
-            "$or": [{"user_id": user_id}, {"partner_id": user_id}],
-            "status": "active"
-        }
-        if partner_id:
-            query["$and"] = [{"$or": [{"user_id": partner_id}, {"partner_id": partner_id}]}]
-            
-        conn = await self.vibe_connections.find_one(query)
+        if connection is not None:
+            conn = connection
+        else:
+            query = {
+                "$or": [{"user_id": user_id}, {"partner_id": user_id}],
+                "status": "active"
+            }
+            if partner_id:
+                query["$and"] = [{"$or": [{"user_id": partner_id}, {"partner_id": partner_id}]}]
+            conn = await self.vibe_connections.find_one(query)
         
         if not conn:
             return {"current_streak": 0, "last_answered": None, "cards_answered_today": 0}
@@ -312,19 +325,18 @@ class VibeCardService:
         partner_id = conn["partner_id"] if conn["user_id"] == user_id else conn["user_id"]
         
         # Ensure current_journey_day is up to date
-        conn = await self._ensure_current_journey_day(user_id, partner_id, user_timezone)
+        conn = await self._ensure_current_journey_day(user_id, partner_id, user_timezone, existing_conn=conn)
         if not conn:
             return {"current_streak": 0, "last_answered": None, "cards_answered_today": 0}
             
         current_day = conn.get("current_journey_day", 1)
-        
-        # Get answers for both users
-        my_ans_cursor = self.user_answers.find({"user_id": user_id, "partner_id": partner_id})
-        pa_ans_cursor = self.user_answers.find({"user_id": partner_id, "partner_id": user_id})
-        
-        my_ans = await my_ans_cursor.to_list(length=None)
-        pa_ans = await pa_ans_cursor.to_list(length=None)
-        
+
+        # Concurrently fetch answers for both users
+        my_ans, pa_ans = await asyncio.gather(
+            self.user_answers.find({"user_id": user_id, "partner_id": partner_id}).to_list(length=300),
+            self.user_answers.find({"user_id": partner_id, "partner_id": user_id}).to_list(length=300)
+        )
+
         # Find journey_days where BOTH answered
         my_days = {doc["journey_day"] for doc in my_ans if "journey_day" in doc}
         pa_days = {doc["journey_day"] for doc in pa_ans if "journey_day" in doc}

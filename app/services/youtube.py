@@ -1,12 +1,11 @@
+import time
+import urllib.parse
+from typing import Dict, Any, List, Optional, Tuple
+from datetime import datetime, timedelta
 import httpx
-from typing import Dict, Any, List
+from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient
 from app.core.db import get_client, get_db
-
-from bson import ObjectId
-from datetime import datetime, timedelta
-import urllib.parse
-
 from app.core.config import settings
 
 class YouTubeMusicService:
@@ -16,6 +15,26 @@ class YouTubeMusicService:
         self.user_links = self.db["user_music_links"]
         self.shared_tracks = self.db["shared_tracks"]
         self.users = self.db["users"]
+        self.cache_collection = self.db["youtube_search_cache"]
+        self._http_client: Optional[httpx.AsyncClient] = None
+        self._search_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+
+    async def init_indexes(self):
+        try:
+            await self.cache_collection.create_index("clean_query", unique=True)
+            await self.cache_collection.create_index("created_at", expireAfterSeconds=86400 * 7)
+            await self.shared_tracks.create_index("added_by")
+            await self.user_links.create_index([("user_id", 1), ("provider", 1)], unique=True)
+        except Exception as e:
+            print(f"Index initialization note in youtube: {e}")
+
+    def _get_http_client(self) -> httpx.AsyncClient:
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(
+                timeout=12.0,
+                limits=httpx.Limits(max_keepalive_connections=20, max_connections=50)
+            )
+        return self._http_client
 
     def get_auth_url(self) -> str:
         base_url = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -150,8 +169,26 @@ class YouTubeMusicService:
             return pl_id
 
     async def search_tracks(self, query: str) -> List[Dict[str, Any]]:
-        # Using API Key for search to save user tokens, or use user token if available. 
-        # Using API Key is simpler.
+        clean_query = query.strip().lower()
+        now_ts = time.time()
+
+        # 1. Level 1: In-memory cache (15 minutes TTL)
+        if clean_query in self._search_cache:
+            ts, cached_data = self._search_cache[clean_query]
+            if now_ts - ts < 900:
+                return cached_data
+
+        # 2. Level 2: MongoDB persistent cache (7 days TTL)
+        try:
+            cached_doc = await self.cache_collection.find_one({"clean_query": clean_query})
+            if cached_doc and "results" in cached_doc:
+                results = cached_doc["results"]
+                self._search_cache[clean_query] = (now_ts, results)
+                return results
+        except Exception:
+            pass
+
+        # 3. Level 3: External YouTube API call
         url = "https://www.googleapis.com/youtube/v3/search"
         params = {
             "part": "snippet",
@@ -161,12 +198,12 @@ class YouTubeMusicService:
             "maxResults": 10,
             "key": settings.YOUTUBE_API_KEY
         }
-        
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-            items = resp.json().get("items", [])
-            
+
+        client = self._get_http_client()
+        resp = await client.get(url, params=params)
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+
         results = []
         for item in items:
             snippet = item["snippet"]
@@ -177,6 +214,18 @@ class YouTubeMusicService:
                 "cover_url": snippet["thumbnails"]["high"]["url"],
                 "provider": "youtube"
             })
+
+        # Cache in memory and MongoDB
+        self._search_cache[clean_query] = (now_ts, results)
+        try:
+            from datetime import timezone
+            await self.cache_collection.update_one(
+                {"clean_query": clean_query},
+                {"$set": {"clean_query": clean_query, "results": results, "created_at": datetime.now(timezone.utc)}},
+                upsert=True
+            )
+        except Exception:
+            pass
         return results
 
     async def add_track(self, user_id: str, track_id: str, title: str, artist: str, cover_url: str) -> None:

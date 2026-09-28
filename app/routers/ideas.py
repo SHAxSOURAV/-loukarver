@@ -19,7 +19,8 @@ async def get_browse_ideas(
 ):
     """Get a paginated list of global and personalized ideas."""
     try:
-        data, total = await idea_service.get_browse_ideas(current_user["id"], page, size)
+        partner_id = current_user.get("partner", {}).get("user_id") if current_user.get("is_aligned") and current_user.get("partner") else None
+        data, total = await idea_service.get_browse_ideas(current_user["id"], page, size, partner_id=partner_id)
         return IdeaListResponse(success=True, data=data, total=total, page=page, size=size)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

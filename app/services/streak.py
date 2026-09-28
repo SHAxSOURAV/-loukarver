@@ -25,6 +25,8 @@ def get_time_name(hour: int) -> str:
     else:
         return "night"
 
+import asyncio
+
 class StreakSystem:
     def __init__(self) -> None:
         self.client = get_client()
@@ -37,9 +39,15 @@ class StreakSystem:
             await self.rituals_collection.drop_index("user_id_1_completed_date_1")
         except Exception:
             pass
-        await self.rituals_collection.create_index(
-            [("user_id", 1), ("completed_date", 1)]
-        )
+        try:
+            await self.rituals_collection.create_index(
+                [("user_id", 1), ("completed_date", -1), ("created_at", -1)]
+            )
+            await self.rituals_collection.create_index(
+                [("user_id", 1), ("completed_date", 1)]
+            )
+        except Exception as e:
+            print(f"Error initializing streak indexes: {e}")
 
     async def mark_ritual_complete(self, user_id: str, payload: RitualCompleteRequest, file: Optional[UploadFile] = None) -> Dict[str, Any]:
         local_now = get_local_now(payload.timezone)
@@ -258,8 +266,11 @@ class StreakSystem:
             "combined_days_both_completed": combined_days
         }
 
-    async def get_history(self, user_id: str, page: int, limit: int, timezone: str) -> Dict[str, Any]:
-        user = await self.users_collection.find_one({"_id": ObjectId(user_id)})
+    async def get_history(self, user_id: str, page: int, limit: int, timezone: str, user_doc: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if user_doc:
+            user = user_doc
+        else:
+            user = await self.users_collection.find_one({"_id": ObjectId(user_id)}, {"partner": 1, "name": 1})
         partner_id = None
         partner_name = "Partner"
         user_name = user.get("name", "Me") if user else "Me"
@@ -276,15 +287,19 @@ class StreakSystem:
         cursor = self.rituals_collection.find({"user_id": {"$in": user_ids}})\
             .sort([("completed_date", -1), ("created_at", -1)])\
             .skip(skip).limit(limit)
-        docs = await cursor.to_list(length=None)
         
-        total = await self.rituals_collection.count_documents({"user_id": {"$in": user_ids}})
+        all_cursor = self.rituals_collection.find({"user_id": user_id}, {"completed_date": 1})\
+            .sort("completed_date", -1).limit(60)
+
+        docs, total, all_docs = await asyncio.gather(
+            cursor.to_list(length=limit),
+            self.rituals_collection.count_documents({"user_id": {"$in": user_ids}}),
+            all_cursor.to_list(length=60)
+        )
         
         local_now = get_local_now(timezone)
         current_date_str = local_now.strftime("%Y-%m-%d")
         
-        all_cursor = self.rituals_collection.find({"user_id": user_id}, {"completed_date": 1})
-        all_docs = await all_cursor.to_list(length=None)
         completed_dates = {doc["completed_date"] for doc in all_docs}
         streak = calculate_streak(completed_dates, current_date_str)
         
@@ -315,8 +330,11 @@ class StreakSystem:
             "streak": streak
         }
 
-    async def get_partner_history(self, user_id: str, page: int, limit: int, timezone: str) -> Dict[str, Any]:
-        user = await self.users_collection.find_one({"_id": ObjectId(user_id)})
+    async def get_partner_history(self, user_id: str, page: int, limit: int, timezone: str, user_doc: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if user_doc:
+            user = user_doc
+        else:
+            user = await self.users_collection.find_one({"_id": ObjectId(user_id)}, {"partner": 1, "name": 1})
         partner_id = None
         if user and user.get("partner"):
             partner_id = user["partner"]["user_id"]
@@ -334,8 +352,11 @@ class StreakSystem:
         cursor = self.rituals_collection.find(query)\
             .sort([("completed_date", -1), ("created_at", -1)])\
             .skip(skip).limit(limit)
-        docs = await cursor.to_list(length=None)
-        total = await self.rituals_collection.count_documents(query)
+            
+        docs, total = await asyncio.gather(
+            cursor.to_list(length=None),
+            self.rituals_collection.count_documents(query)
+        )
         
         data = []
         partner_name_str = user["partner"].get("name", "Partner")

@@ -14,7 +14,7 @@ async def get_us_stats(current_user: dict = Depends(get_current_user)):
     Retrieves relationship statistics and milestones for the aligned couple.
     """
     try:
-        stats = await us_service.get_stats(current_user["id"])
+        stats = await us_service.get_stats(current_user["id"], user_doc=current_user)
         if stats is None:
             return UsResponse(
                 success=True,

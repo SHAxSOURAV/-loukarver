@@ -1,3 +1,4 @@
+import asyncio
 from typing import Dict, Any, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
 from app.core.db import get_client, get_db
@@ -18,14 +19,15 @@ class InteractionService:
         self.users = self.db["users"]
 
     async def init_indexes(self):
-        # TTL Index to clear data. Since we want a "midnight" reset feel, 
-        # we can use a TTL on a "reset_at" field or just expire documents after 24 hours.
-        # However, for a strict midnight reset, we'll store a "date" string and query by it,
-        # and let the TTL clean up old days.
-        await self.interactions.create_index("created_at", expireAfterSeconds=172800) # Keep for 2 days just in case
+        try:
+            await self.interactions.create_index("created_at", expireAfterSeconds=172800)
+            await self.interactions.create_index([("sender_id", 1), ("recipient_id", 1), ("date", 1)])
+            await self.interactions.create_index([("recipient_id", 1), ("date", 1)])
+        except Exception as e:
+            print(f"Error initializing interaction indexes: {e}")
 
-    async def _get_couple_info(self, user_id: str) -> Optional[Dict[str, Any]]:
-        user = await self.users.find_one({"_id": ObjectId(user_id)})
+    async def _get_couple_info(self, user_id: str, user_doc: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        user = user_doc if user_doc is not None else await self.users.find_one({"_id": ObjectId(user_id)})
         if not user or not user.get("is_aligned") or not user.get("partner"):
             return None
         return {
@@ -36,24 +38,15 @@ class InteractionService:
         }
 
     def _get_today_str(self) -> str:
-        # Midnight reset usually implies the user's local day, 
-        # but for backend we'll use UTC date.
         return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    async def increment_count(self, user_id: str) -> bool:
-        info = await self._get_couple_info(user_id)
+    async def increment_count(self, user_id: str, user_doc: Optional[Dict[str, Any]] = None) -> bool:
+        info = await self._get_couple_info(user_id, user_doc=user_doc)
         if not info:
             return False
 
         today = self._get_today_str()
-        # We track how many times the current user has "poked" the partner
-        # But the requirement is "when partner hit that api, it will increase count +1, when user get this api response, it should contain partner name and count"
-        # So we store it keyed by the recipient (the partner) or the sender?
-        # "partner hit that api... user get this api response... contain partner name and count"
-        # This means the count is "actions received from partner".
         
-        # Key: recipient_id + date
-        # Incrementing user_id's poke to partner_id
         await self.interactions.update_one(
             {
                 "sender_id": user_id, 
@@ -64,7 +57,7 @@ class InteractionService:
                 "$inc": {"count": 1},
                 "$set": {
                     "last_activity": datetime.now(timezone.utc),
-                    "created_at": datetime.now(timezone.utc) # For TTL
+                    "created_at": datetime.now(timezone.utc)
                 }
             },
             upsert=True
@@ -88,26 +81,26 @@ class InteractionService:
 
         return True
 
-    async def get_interaction_stats(self, user_id: str) -> Optional[Dict[str, Any]]:
-        info = await self._get_couple_info(user_id)
+    async def get_interaction_stats(self, user_id: str, user_doc: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        info = await self._get_couple_info(user_id, user_doc=user_doc)
         if not info:
             return None
 
         today = self._get_today_str()
         
-        # Received pokes (partner -> user)
-        received_doc = await self.interactions.find_one({
-            "sender_id": info["partner_id"],
-            "recipient_id": user_id,
-            "date": today
-        })
-        
-        # Sent pokes (user -> partner)
-        sent_doc = await self.interactions.find_one({
-            "sender_id": user_id,
-            "recipient_id": info["partner_id"],
-            "date": today
-        })
+        # Concurrently fetch received and sent pokes
+        received_doc, sent_doc = await asyncio.gather(
+            self.interactions.find_one({
+                "sender_id": info["partner_id"],
+                "recipient_id": user_id,
+                "date": today
+            }),
+            self.interactions.find_one({
+                "sender_id": user_id,
+                "recipient_id": info["partner_id"],
+                "date": today
+            })
+        )
 
         return {
             "partner_name": info["partner_name"],

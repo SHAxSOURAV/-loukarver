@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 import zoneinfo
@@ -50,9 +51,15 @@ class ThreadService:
         self.users = self.db["users"]
 
     async def init_indexes(self):
-        await self.messages_collection.create_index([("creator_id", 1), ("partner_id", 1)])
-        await self.messages_collection.create_index("created_at")
-        await self.prompts_collection.create_index("type")
+        try:
+            await self.messages_collection.create_index([("creator_id", 1), ("partner_id", 1)])
+            await self.messages_collection.create_index([("creator_id", 1), ("created_at", -1)])
+            await self.messages_collection.create_index([("partner_id", 1), ("is_seen", 1)])
+            await self.messages_collection.create_index([("creator_id", 1), ("category", 1)])
+            await self.messages_collection.create_index("created_at")
+            await self.prompts_collection.create_index("type")
+        except Exception as e:
+            print(f"Error initializing thread indexes: {e}")
 
     async def _get_partner_id(self, user_id: str) -> Optional[str]:
         user = await self.users.find_one({"_id": ObjectId(user_id)})
@@ -102,19 +109,17 @@ class ThreadService:
         except Exception as e:
             print(f"Failed to send thread push notification: {e}")
 
-    async def get_categories(self, user_id: str) -> List[str]:
-        partner_id = await self._get_partner_id(user_id)
+    async def get_categories(self, user_id: str, partner_id: Optional[str] = None, user_doc: Optional[dict] = None) -> List[str]:
+        if not partner_id:
+            if user_doc and user_doc.get("partner"):
+                partner_id = user_doc["partner"].get("user_id")
+            else:
+                partner_id = await self._get_partner_id(user_id)
         user_ids = [user_id]
         if partner_id: user_ids.append(partner_id)
         
         # Return categories that have at least one message in this couple's thread
-        pipeline = [
-            {"$match": {"creator_id": {"$in": user_ids}}},
-            {"$group": {"_id": "$category"}}
-        ]
-        cursor = self.messages_collection.aggregate(pipeline)
-        results = await cursor.to_list(length=None)
-        return [r["_id"] for r in results]
+        return await self.messages_collection.distinct("category", {"creator_id": {"$in": user_ids}})
 
     async def post_letter(self, user_id: str, payload: LetterCreate) -> Dict[str, Any]:
         partner_id = await self._get_partner_id(user_id)
@@ -356,8 +361,12 @@ class ThreadService:
         await self._notify_partner(user_id, partner_id, mapped, f"Daily Check-in from {sender_name}", f"{sender_name} posted their daily check-in.")
         return mapped
 
-    async def get_messages(self, user_id: str, page: int = 1, size: int = 20, timezone_str: str = "UTC") -> Tuple[List[Dict[str, Any]], int]:
-        partner_id = await self._get_partner_id(user_id)
+    async def get_messages(self, user_id: str, page: int = 1, size: int = 20, timezone_str: str = "UTC", partner_id: Optional[str] = None, user_doc: Optional[dict] = None) -> Tuple[List[Dict[str, Any]], int]:
+        if not partner_id:
+            if user_doc and user_doc.get("partner"):
+                partner_id = user_doc["partner"].get("user_id")
+            else:
+                partner_id = await self._get_partner_id(user_id)
         user_ids = [user_id]
         if partner_id: user_ids.append(partner_id)
         
@@ -366,18 +375,49 @@ class ThreadService:
             "deleted_for": {"$ne": user_id}
         }
         
-        # Advanced Feature: Mark received messages as delivered & seen when fetched
-        await self.messages_collection.update_many(
+        # Parallelize update and fetches
+        skip = (page - 1) * size
+        cursor = self.messages_collection.find(query).sort("created_at", -1).skip(skip).limit(size)
+        
+        update_task = self.messages_collection.update_many(
             {"partner_id": user_id, "is_seen": False},
             {"$set": {"is_delivered": True, "is_seen": True}}
         )
 
-        skip = (page - 1) * size
-        cursor = self.messages_collection.find(query).sort("created_at", -1).skip(skip).limit(size)
-        docs = await cursor.to_list(length=None)
-        total = await self.messages_collection.count_documents(query)
+        _, docs, total = await asyncio.gather(
+            update_task,
+            cursor.to_list(length=size),
+            self.messages_collection.count_documents(query)
+        )
         
-        return [await self._map_message(d, timezone_str, user_id) for d in docs], total
+        # Pre-fetch user profiles for all messages in one single query
+        all_uids = set()
+        for d in docs:
+            cid = str(d.get("creator_id", ""))
+            pid = str(d.get("partner_id", ""))
+            if cid: all_uids.add(cid)
+            if pid: all_uids.add(pid)
+        all_uids.add(str(user_id))
+        if partner_id: all_uids.add(str(partner_id))
+
+        names_cache: Dict[str, str] = {}
+        photos_cache: Dict[str, str] = {}
+        obj_ids = [ObjectId(uid) for uid in all_uids if ObjectId.is_valid(uid)]
+        if obj_ids:
+            async for user in self.users.find({"_id": {"$in": obj_ids}}):
+                uid_str = str(user["_id"])
+                names_cache[uid_str] = user.get("name", "User")
+                photo = user.get("profile_photo_url") or user.get("photo_url") or user.get("avatar")
+                if not photo and user.get("partner"):
+                    photo = user["partner"].get("profile_photo_url")
+                if photo:
+                    photos_cache[uid_str] = photo
+                if user.get("partner") and user["partner"].get("user_id"):
+                    p_uid = str(user["partner"]["user_id"])
+                    if p_uid not in photos_cache and user["partner"].get("profile_photo_url"):
+                        photos_cache[p_uid] = user["partner"]["profile_photo_url"]
+
+        return [await self._map_message(d, timezone_str, user_id, names_cache=names_cache, photos_cache=photos_cache) for d in docs], total
 
     async def delete_message(self, user_id: str, message_id: str, mode: str = "everyone") -> bool:
         partner_id = await self._get_partner_id(user_id)
@@ -496,37 +536,42 @@ class ThreadService:
         )
         return await self._map_message(result, timezone_str, user_id)
 
-    async def _map_message(self, d: Dict[str, Any], timezone_str: str, current_user_id: str) -> Dict[str, Any]:
+    async def _map_message(self, d: Dict[str, Any], timezone_str: str, current_user_id: str, names_cache: Optional[Dict[str, str]] = None, photos_cache: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         d["id"] = str(d["_id"]) if "_id" in d else d.get("id")
         if "_id" in d: del d["_id"]
         
         creator_str = str(d.get("creator_id", ""))
-        partner_id = await self._get_partner_id(creator_str)
-        partner_str = str(partner_id) if partner_id else None
 
-        user_ids_to_fetch = []
-        for uid in [creator_str, partner_str, str(current_user_id)]:
-            if uid:
-                user_ids_to_fetch.append(uid)
-                if ObjectId.is_valid(uid):
-                    user_ids_to_fetch.append(ObjectId(uid))
+        if names_cache is not None and photos_cache is not None:
+            names = names_cache
+            photos = photos_cache
+        else:
+            partner_id = await self._get_partner_id(creator_str)
+            partner_str = str(partner_id) if partner_id else None
 
-        names = {}
-        photos = {}
-        if user_ids_to_fetch:
-            async for user in self.users.find({"_id": {"$in": user_ids_to_fetch}}):
-                uid_str = str(user["_id"])
-                names[uid_str] = user.get("name", "User")
-                
-                photo = user.get("profile_photo_url") or user.get("photo_url") or user.get("avatar")
-                if not photo and user.get("partner"):
-                    photo = user["partner"].get("profile_photo_url")
-                if photo:
-                    photos[uid_str] = photo
-                if user.get("partner") and user["partner"].get("user_id"):
-                    p_uid = str(user["partner"]["user_id"])
-                    if p_uid not in photos and user["partner"].get("profile_photo_url"):
-                        photos[p_uid] = user["partner"]["profile_photo_url"]
+            user_ids_to_fetch = []
+            for uid in [creator_str, partner_str, str(current_user_id)]:
+                if uid:
+                    user_ids_to_fetch.append(uid)
+                    if ObjectId.is_valid(uid):
+                        user_ids_to_fetch.append(ObjectId(uid))
+
+            names = {}
+            photos = {}
+            if user_ids_to_fetch:
+                async for user in self.users.find({"_id": {"$in": user_ids_to_fetch}}):
+                    uid_str = str(user["_id"])
+                    names[uid_str] = user.get("name", "User")
+                    
+                    photo = user.get("profile_photo_url") or user.get("photo_url") or user.get("avatar")
+                    if not photo and user.get("partner"):
+                        photo = user["partner"].get("profile_photo_url")
+                    if photo:
+                        photos[uid_str] = photo
+                    if user.get("partner") and user["partner"].get("user_id"):
+                        p_uid = str(user["partner"]["user_id"])
+                        if p_uid not in photos and user["partner"].get("profile_photo_url"):
+                            photos[p_uid] = user["partner"]["profile_photo_url"]
 
         u_name = names.get(str(current_user_id), "User")
         p_name = "Partner"

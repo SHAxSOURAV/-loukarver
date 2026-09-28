@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Dict, Any, Optional
 from app.services.admin import admin_service
+from app.services.reports import report_service
 from app.schemas.admin import DashboardStatsResponse, UserStatusUpdate
 from app.routers.auth import get_current_user
 
@@ -62,25 +63,21 @@ async def update_user_status(user_id: str, payload: UserStatusUpdate, admin: dic
 @router.get("/reports")
 async def get_all_reports(status: str = "All", search: str = "", admin: dict = Depends(require_admin)):
     """Get all reports."""
-    from app.services.reports import report_service
     return await report_service.get_all_reports(status, search)
 
 @router.patch("/reports/{report_id}/status")
 async def update_report_status(report_id: str, payload: dict, admin: dict = Depends(require_admin)):
     """Update report status."""
-    from app.services.reports import report_service
     return await report_service.update_report_status(report_id, payload.get("status"))
 
 @router.get("/reports/{report_id}/messages")
 async def get_report_messages(report_id: str, admin: dict = Depends(require_admin)):
     """Get chat messages for a specific report."""
-    from app.services.reports import report_service
     return await report_service.get_messages(report_id)
 
 @router.post("/reports/{report_id}/messages")
 async def add_report_message(report_id: str, payload: dict, admin: dict = Depends(require_admin)):
     """Add a new message from admin."""
-    from app.services.reports import report_service
     return await report_service.add_message(
         report_id=report_id,
         sender_id=admin["id"],

@@ -10,5 +10,5 @@ async def get_play_stats(current_user: dict = Depends(get_current_user)):
     """
     Get Play section stats: viber name, streak days, and cumulated match percentage.
     """
-    stats = await play_service.get_play_stats(current_user["id"])
+    stats = await play_service.get_play_stats(current_user["id"], user_doc=current_user)
     return PlayStatsResponse(**stats)

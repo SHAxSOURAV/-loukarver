@@ -51,7 +51,7 @@ async def list_received_secrets(
 ):
     """List unviewed secrets received from your partner (Paginated)."""
     try:
-        data, total = await secret_service.get_secrets_for_me(current_user["id"], page, size, timezone)
+        data, total = await secret_service.get_secrets_for_me(current_user["id"], page, size, timezone, user_doc=current_user)
         return SecretPaginatedResponse(success=True, data=data, total=total, page=page, size=size)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -65,7 +65,7 @@ async def list_sent_secrets(
 ):
     """List unviewed secrets you sent to your partner (Paginated)."""
     try:
-        data, total = await secret_service.get_sent_secrets(current_user["id"], page, size, timezone)
+        data, total = await secret_service.get_sent_secrets(current_user["id"], page, size, timezone, user_doc=current_user)
         return SecretPaginatedResponse(success=True, data=data, total=total, page=page, size=size)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

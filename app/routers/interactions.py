@@ -8,7 +8,7 @@ router = APIRouter(prefix="/interactions", tags=["Interactions"])
 @router.post("/poke", response_model=GenericResponse)
 async def poke_partner(current_user: dict = Depends(get_current_user)):
     """Increment the interaction count for your partner."""
-    success = await interaction_service.increment_count(current_user["id"])
+    success = await interaction_service.increment_count(current_user["id"], user_doc=current_user)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -19,10 +19,13 @@ async def poke_partner(current_user: dict = Depends(get_current_user)):
 @router.get("", response_model=InteractionResponse)
 async def get_interactions(current_user: dict = Depends(get_current_user)):
     """Get the count of interactions received from your partner today."""
-    stats = await interaction_service.get_interaction_stats(current_user["id"])
+    stats = await interaction_service.get_interaction_stats(current_user["id"], user_doc=current_user)
     if stats is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Could not fetch interactions. Ensure you are aligned with a partner."
-        )
+        stats = {
+            "partner_name": "Partner",
+            "received_count": 0,
+            "received_last_activity": None,
+            "sent_count": 0,
+            "sent_last_activity": None
+        }
     return InteractionResponse(success=True, data=stats)

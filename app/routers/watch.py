@@ -50,7 +50,7 @@ async def accept_watch_session(session_id: str, current_user: dict = Depends(get
 async def get_watch_sessions(current_user: dict = Depends(get_current_user)):
     """Get all watch sessions for the couple."""
     try:
-        results = await watch_service.get_sessions(current_user["id"])
+        results = await watch_service.get_sessions(current_user["id"], user_doc=current_user)
         return WatchSessionListResponse(success=True, data=results)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

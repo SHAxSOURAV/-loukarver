@@ -8,6 +8,7 @@ from app.core.db import get_client, get_db
 from bson import ObjectId
 from datetime import datetime, timezone, timedelta
 from app.core.config import settings
+import asyncio
 from app.schemas.vibe_check import VibeCheckProfileCreate, VibeInviteResponse, VibeInviteValidateResponse, VibeInviteAcceptResponse
 
 class VibeCheckService:
@@ -22,13 +23,21 @@ class VibeCheckService:
         self.user_streaks = self.db["vibe_user_streaks"]
 
     async def init_indexes(self):
-        await self.profiles.create_index("user_id", unique=True)
-        await self.profiles.create_index("vibe_key", unique=True)
-        await self.connections.create_index([("user_id", 1), ("partner_id", 1)], unique=True)
-        await self.requests.create_index([("sender_id", 1), ("recipient_id", 1)], unique=True)
-        await self.requests.create_index("recipient_id")
-        await self.invites.create_index("invite_code", unique=True)
-        await self.invites.create_index("inviter_id")
+        try:
+            await self.profiles.create_index("user_id", unique=True)
+            await self.profiles.create_index("vibe_key", unique=True)
+            await self.connections.create_index([("user_id", 1), ("partner_id", 1)], unique=True)
+            await self.connections.create_index([("user_id", 1), ("status", 1)])
+            await self.connections.create_index([("partner_id", 1), ("status", 1)])
+            await self.connections.create_index("partner_id")
+            await self.requests.create_index([("sender_id", 1), ("recipient_id", 1)], unique=True)
+            await self.requests.create_index("recipient_id")
+            await self.invites.create_index("invite_code", unique=True)
+            await self.invites.create_index("inviter_id")
+            await self.cumulative_scores.create_index([("user_id", 1), ("partner_id", 1)], unique=True)
+            await self.user_streaks.create_index("user_id", unique=True)
+        except Exception as e:
+            print(f"Index initialization note in vibe_check: {e}")
 
     async def generate_unique_vibe_key(self) -> str:
         """Generates a unique 12-character vibe key like VIBE-X7R2P9."""
@@ -60,24 +69,30 @@ class VibeCheckService:
                 )
                 doc["vibe_key"] = vibe_key
             
-            # 1. Count connections (connect)
-            connect_count = await self.connections.count_documents({"user_id": user_id})
+            # Concurrently count connections and fetch partner IDs
+            connect_count_task = self.connections.count_documents({"user_id": user_id})
+            connection_docs_task = self.connections.find({"user_id": user_id}, {"partner_id": 1}).to_list(length=None)
+            connect_count, connection_docs = await asyncio.gather(connect_count_task, connection_docs_task)
             
             # 2. Categorize partners (active vs inactive) - Threshold: 5 minutes
             active_threshold = now - timedelta(minutes=5)
-            
-            # Fetch all partner IDs for this user
-            cursor = self.connections.find({"user_id": user_id}, {"partner_id": 1})
-            connection_docs = await cursor.to_list(length=None)
             partner_ids = [c["partner_id"] for c in connection_docs]
             
             active_users = []
             inactive_users = []
             
             if partner_ids:
-                # Fetch all partner profiles
-                partner_profiles_cursor = self.profiles.find({"user_id": {"$in": partner_ids}})
-                partner_profiles = await partner_profiles_cursor.to_list(length=None)
+                # Concurrently batch-fetch partner profiles, cumulative scores, and user streaks in single roundtrips
+                profiles_task = self.profiles.find({"user_id": {"$in": partner_ids}}).to_list(length=None)
+                scores_task = self.cumulative_scores.find({"user_id": user_id, "partner_id": {"$in": partner_ids}}).to_list(length=None)
+                streaks_task = self.user_streaks.find({"user_id": {"$in": partner_ids}}).to_list(length=None)
+                
+                partner_profiles, scores_docs, streaks_docs = await asyncio.gather(
+                    profiles_task, scores_task, streaks_task
+                )
+                
+                scores_map = {s["partner_id"]: round(s["score"], 1) for s in scores_docs if "partner_id" in s and "score" in s}
+                streaks_map = {st["user_id"]: st.get("current_streak", 0) for st in streaks_docs if "user_id" in st}
                 
                 for p in partner_profiles:
                     p_id = p["user_id"]
@@ -87,18 +102,9 @@ class VibeCheckService:
                     if last_active and last_active.tzinfo is None:
                         last_active = last_active.replace(tzinfo=timezone.utc)
                     
-                    is_active = last_active and last_active >= active_threshold
-                    
-                    # 2. Get match percentage
-                    score_doc = await self.cumulative_scores.find_one({
-                        "user_id": user_id, 
-                        "partner_id": p_id
-                    })
-                    match_percentage = round(score_doc["score"], 1) if score_doc else 0.0
-                    
-                    # 3. Get partner's streak
-                    streak_doc = await self.user_streaks.find_one({"user_id": p_id})
-                    streak_days = streak_doc["current_streak"] if streak_doc else 0
+                    is_active = bool(last_active and last_active >= active_threshold)
+                    match_percentage = scores_map.get(p_id, 0.0)
+                    streak_days = streaks_map.get(p_id, 0)
                     
                     stats = {
                         "user_id": p["user_id"],

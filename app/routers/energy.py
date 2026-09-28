@@ -32,7 +32,7 @@ async def get_energy_logs(current_user: dict = Depends(get_current_user)):
 async def get_partner_energy(current_user: dict = Depends(get_current_user)):
     """Get the partner's shared energy logs."""
     try:
-        results = await energy_service.get_partner_energy(current_user["id"])
+        results = await energy_service.get_partner_energy(current_user["id"], user_doc=current_user)
         return EnergyListResponse(success=True, data=results)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

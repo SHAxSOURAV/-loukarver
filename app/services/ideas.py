@@ -29,6 +29,8 @@ def parse_idea_time(time_str: str) -> timedelta:
         
     return timedelta(hours=1) # Default to 1 hour if unparseable
 
+import asyncio
+
 class IdeaService:
     def __init__(self) -> None:
         self.client = get_client()
@@ -37,11 +39,17 @@ class IdeaService:
         self.personalized_ideas = self.db["personalized_ideas"]
         self.idea_progress = self.db["idea_progress"]
         self.users = self.db["users"]
+        self._global_ideas_cache: Optional[List[Dict[str, Any]]] = None
 
     async def init_indexes(self):
-        # TTL Index for personalized ideas and progress - expire after 24 hours
-        await self.personalized_ideas.create_index("created_at", expireAfterSeconds=86400)
-        await self.idea_progress.create_index("created_at", expireAfterSeconds=86400)
+        try:
+            # TTL Index for personalized ideas and progress - expire after 24 hours
+            await self.personalized_ideas.create_index("created_at", expireAfterSeconds=86400)
+            await self.idea_progress.create_index("created_at", expireAfterSeconds=86400)
+            await self.personalized_ideas.create_index("user_id")
+            await self.global_ideas.create_index("name")
+        except Exception as e:
+            print(f"Index initialization note in ideas: {e}")
 
     async def seed_defaults(self):
         count = await self.global_ideas.count_documents({})
@@ -59,59 +67,58 @@ class IdeaService:
             await self.global_ideas.insert_many(defaults)
 
     async def _get_partner_id(self, user_id: str) -> Optional[str]:
-        user = await self.users.find_one({"_id": ObjectId(user_id)})
+        user = await self.users.find_one({"_id": ObjectId(user_id)}, {"partner.user_id": 1, "is_aligned": 1})
         if user and user.get("is_aligned") and user.get("partner"):
             return user["partner"]["user_id"]
         return None
 
     async def _get_names(self, user_id: str, partner_id: Optional[str]) -> Tuple[str, str]:
-        user = await self.users.find_one({"_id": ObjectId(user_id)})
+        user = await self.users.find_one({"_id": ObjectId(user_id)}, {"name": 1})
         u_name = user.get("name", "User") if user else "User"
         p_name = "Partner"
         if partner_id:
-            pt = await self.users.find_one({"_id": ObjectId(partner_id)})
+            pt = await self.users.find_one({"_id": ObjectId(partner_id)}, {"name": 1})
             if pt:
                 p_name = pt.get("name", "Partner")
         return u_name, p_name
 
     # --- Idea CRUD ---
 
-    async def get_browse_ideas(self, user_id: str, page: int = 1, size: int = 10) -> Tuple[List[Dict[str, Any]], int]:
-        partner_id = await self._get_partner_id(user_id)
+    async def get_browse_ideas(self, user_id: str, page: int = 1, size: int = 10, partner_id: Optional[str] = None) -> Tuple[List[Dict[str, Any]], int]:
+        if partner_id is None:
+            partner_id = await self._get_partner_id(user_id)
         user_ids = [user_id]
         if partner_id:
             user_ids.append(partner_id)
 
         skip = (page - 1) * size
 
-        pipeline = [
-            {"$addFields": {"is_personalized": False, "user_id": None}},
-            {
-                "$unionWith": {
-                    "coll": "personalized_ideas",
-                    "pipeline": [
-                        {"$match": {"user_id": {"$in": user_ids}}},
-                        {"$addFields": {"is_personalized": True}}
-                    ]
-                }
-            },
-            {"$sort": {"name": 1}},
-            {
-                "$facet": {
-                    "data": [{"$skip": skip}, {"$limit": size}],
-                    "total": [{"$count": "count"}]
-                }
-            }
-        ]
+        # Cache global ideas in memory to eliminate static DB queries
+        if self._global_ideas_cache is None:
+            self._global_ideas_cache = await self.global_ideas.find({}).to_list(length=200)
+        global_docs = self._global_ideas_cache
+        personalized_docs = await self.personalized_ideas.find({"user_id": {"$in": user_ids}}).to_list(length=200)
 
-        result = await self.global_ideas.aggregate(pipeline).to_list(length=1)
-        data = result[0]["data"]
-        total = result[0]["total"][0]["count"] if result[0]["total"] else 0
+        all_ideas: List[Dict[str, Any]] = []
+        for g in global_docs:
+            g_copy = dict(g)
+            g_copy["id"] = str(g_copy["_id"])
+            g_copy.pop("_id", None)
+            g_copy["is_personalized"] = False
+            g_copy["user_id"] = None
+            all_ideas.append(g_copy)
 
-        for d in data:
-            d["id"] = str(d["_id"])
-            del d["_id"]
-        
+        for p in personalized_docs:
+            p_copy = dict(p)
+            p_copy["id"] = str(p_copy["_id"])
+            p_copy.pop("_id", None)
+            p_copy["is_personalized"] = True
+            all_ideas.append(p_copy)
+
+        all_ideas.sort(key=lambda x: x.get("name", "").lower())
+        total = len(all_ideas)
+        data = all_ideas[skip : skip + size]
+
         return data, total
 
     async def create_personalized_idea(self, user_id: str, payload: IdeaCreate) -> Dict[str, Any]:

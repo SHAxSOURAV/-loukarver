@@ -14,6 +14,8 @@ def parse_date(date_str: str) -> date:
     parts = re.split(r"[\.,]", date_str)
     return date(int(parts[2]), int(parts[0]), int(parts[1]))
 
+import asyncio
+
 class LifeCycleService:
     def __init__(self) -> None:
         self.client = get_client()
@@ -22,9 +24,21 @@ class LifeCycleService:
         self.notes = self.db["lifecycle_notes"]
         self.users = self.db["users"]
 
-    async def _get_owner_and_partner(self, user_id: str):
-        """Returns the user ID of the woman in the relationship (the owner) and partner ID."""
-        user = await self.users.find_one({"_id": ObjectId(user_id)})
+    async def init_indexes(self):
+        try:
+            await self.periods.create_index([("user_id", 1), ("start_date", -1)])
+            await self.notes.create_index([("user_id", 1), ("date", 1)])
+            await self.notes.create_index([("user_id", 1), ("cycle_day", 1)])
+        except Exception as e:
+            print(f"Error initializing lifecycle indexes: {e}")
+
+    async def _get_owner_and_partner(self, user_id: str, user_doc: Optional[Dict[str, Any]] = None):
+        """Returns the user ID of the woman in the relationship (the owner), partner ID, and owner user doc."""
+        if user_doc:
+            user = user_doc
+        else:
+            user = await self.users.find_one({"_id": ObjectId(user_id)}, {"gender": 1, "is_aligned": 1, "partner": 1, "name": 1, "cycle_data_shared": 1})
+            
         partner_id = None
         if user and user.get("is_aligned") and user.get("partner"):
             partner_id = user["partner"].get("user_id")
@@ -33,21 +47,22 @@ class LifeCycleService:
         user_gender = user.get("gender", "Male") if user else "Male"
         
         partner_gender = "Male"
+        partner = None
         if partner_id:
-            partner = await self.users.find_one({"_id": ObjectId(partner_id)})
+            partner = await self.users.find_one({"_id": ObjectId(partner_id)}, {"gender": 1, "name": 1, "cycle_data_shared": 1})
             if partner:
                 partner_gender = partner.get("gender", "Male")
 
         # If user is female, she owns her cycle dashboard view.
         if user_gender == "Female":
-            return user_id, partner_id
+            return user_id, partner_id, user
             
         # If user is Male and partner is Female, partner owns the cycle.
         if partner_gender == "Female":
-            return partner_id, user_id
+            return partner_id, user_id, partner
             
         # Default fallback if neither or both are male
-        return user_id, partner_id
+        return user_id, partner_id, user
 
     @staticmethod
     def _get_relative_time(created_at: datetime) -> str:
@@ -95,11 +110,10 @@ class LifeCycleService:
         )
         return {"success": True}
 
-    async def get_cycle_stats(self, user_id: str) -> Dict[str, Any]:
-        owner_id, partner_id = await self._get_owner_and_partner(user_id)
+    async def get_cycle_stats(self, user_id: str, user_doc: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        owner_id, partner_id, owner_user = await self._get_owner_and_partner(user_id, user_doc=user_doc)
         
         # Fetch the period owner's name and sharing status
-        owner_user = await self.users.find_one({"_id": ObjectId(owner_id)})
         period_user_name = owner_user.get("name") if owner_user else None
         is_shared = owner_user.get("cycle_data_shared", True) if owner_user else True
         
@@ -113,8 +127,10 @@ class LifeCycleService:
                 "current_note": None
             }
         
-        cursor = self.periods.find({"user_id": owner_id}).sort("start_date", -1)
-        history = await cursor.to_list(length=10) # Last 10 periods for averaging
+        # Concurrently fetch periods and current note
+        history_task = self.periods.find({"user_id": owner_id}).sort("start_date", -1).to_list(length=10)
+        note_task = self._get_current_note(owner_id, user_id, viewer_tz="UTC")
+        history, current_note = await asyncio.gather(history_task, note_task)
         
         if not history:
             return {
@@ -122,7 +138,7 @@ class LifeCycleService:
                 "is_shared": is_shared,
                 "stats": None,
                 "history": [],
-                "current_note": await self._get_current_note(owner_id, user_id, viewer_tz="UTC")
+                "current_note": current_note
             }
             
         # 1. Calculate Average Cycle Length
@@ -192,7 +208,7 @@ class LifeCycleService:
             "is_shared": is_shared,
             "stats": stats,
             "history": [{"id": p["id"], "user_id": p["user_id"], "start_date": p["start_date"]} for p in parsed_history],
-            "current_note": await self._get_current_note(owner_id, user_id, viewer_tz="UTC")
+            "current_note": current_note
         }
 
     async def add_period(self, user_id: str, payload: PeriodCreate) -> Dict[str, Any]:

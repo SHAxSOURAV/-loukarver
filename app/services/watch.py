@@ -37,8 +37,15 @@ class WatchService:
         self.watch_sessions = self.db["watch_sessions"]
         self.users = self.db["users"]
 
-    async def _get_couple_ids(self, user_id: str) -> List[str]:
-        user = await self.users.find_one({"_id": ObjectId(user_id)})
+    async def init_indexes(self):
+        try:
+            await self.watch_sessions.create_index([("user_ids", 1), ("utc_timestamp", 1)])
+            await self.watch_sessions.create_index("user_ids")
+        except Exception as e:
+            print(f"Error initializing watch indexes: {e}")
+
+    async def _get_couple_ids(self, user_id: str, user_doc: Optional[dict] = None) -> List[str]:
+        user = user_doc if user_doc is not None else await self.users.find_one({"_id": ObjectId(user_id)})
         if user and user.get("is_aligned") and user.get("partner"):
             return sorted([user_id, user["partner"]["user_id"]])
         return [user_id]
@@ -116,10 +123,10 @@ class WatchService:
             
         return await self._map_session(result, user_id)
 
-    async def get_sessions(self, user_id: str) -> List[Dict[str, Any]]:
-        couple_ids = await self._get_couple_ids(user_id)
+    async def get_sessions(self, user_id: str, user_doc: Optional[dict] = None) -> List[Dict[str, Any]]:
+        couple_ids = await self._get_couple_ids(user_id, user_doc=user_doc)
         cursor = self.watch_sessions.find({"user_ids": couple_ids}).sort("utc_timestamp", 1)
-        docs = await cursor.to_list(length=None)
+        docs = await cursor.to_list(length=100)
         return [await self._map_session(d, user_id) for d in docs]
 
     async def get_session(self, session_id: str, user_id: str) -> Optional[Dict[str, Any]]:

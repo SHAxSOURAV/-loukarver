@@ -16,7 +16,7 @@ router = APIRouter(prefix="/thread", tags=["Thread"])
 @router.get("/categories", response_model=ThreadCategoryResponse)
 async def get_categories(current_user: dict = Depends(get_current_user)):
     """Get all available message categories for the thread."""
-    return ThreadCategoryResponse(success=True, data=await thread_service.get_categories(current_user["id"]))
+    return ThreadCategoryResponse(success=True, data=await thread_service.get_categories(current_user["id"], user_doc=current_user))
 
 @router.get("/messages", response_model=List[ThreadMessageResponse])
 async def get_messages(
@@ -26,7 +26,7 @@ async def get_messages(
     current_user: dict = Depends(get_current_user)
 ):
     """Get all shared messages in the thread (Paginated)."""
-    messages, _ = await thread_service.get_messages(current_user["id"], page, size, timezone)
+    messages, _ = await thread_service.get_messages(current_user["id"], page, size, timezone, user_doc=current_user)
     return messages
 
 @router.delete("/{message_id}", response_model=GenericResponse)

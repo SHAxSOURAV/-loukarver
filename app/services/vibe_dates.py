@@ -1,3 +1,4 @@
+import asyncio
 import zoneinfo
 from typing import Dict, Any, List, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -20,8 +21,13 @@ class VibeDateService:
         self.profiles = self.db["vibe_check_profiles"]
 
     async def init_indexes(self):
-        await self.dates.create_index("proposer_id")
-        await self.dates.create_index("partner_id")
+        try:
+            await self.dates.create_index([("proposer_id", 1), ("updated_at", -1)])
+            await self.dates.create_index([("partner_id", 1), ("updated_at", -1)])
+            await self.dates.create_index("proposer_id")
+            await self.dates.create_index("partner_id")
+        except Exception as e:
+            print(f"Error initializing vibe dates indexes: {e}")
 
     async def _map_date(self, d: Dict[str, Any], user_timezone: str) -> Dict[str, Any]:
         d["id"] = str(d["_id"])
@@ -103,8 +109,10 @@ class VibeDateService:
         skip = (page - 1) * size
         
         cursor = self.dates.find(query).sort("updated_at", -1).skip(skip).limit(size)
-        docs = await cursor.to_list(length=None)
-        total = await self.dates.count_documents(query)
+        docs, total = await asyncio.gather(
+            cursor.to_list(length=size),
+            self.dates.count_documents(query)
+        )
         
         results = [await self._map_date(d, user_timezone) for d in docs]
         return results, total
@@ -372,8 +380,10 @@ class VibeDateService:
         skip = (page - 1) * size
         
         cursor = self.dates.find(query).sort("updated_at", -1).skip(skip).limit(size)
-        docs = await cursor.to_list(length=None)
-        total = await self.dates.count_documents(query)
+        docs, total = await asyncio.gather(
+            cursor.to_list(length=size),
+            self.dates.count_documents(query)
+        )
         
         results = [await self._map_date(d, user_timezone) for d in docs]
         return results, total

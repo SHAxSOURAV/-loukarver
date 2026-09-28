@@ -22,21 +22,32 @@ class UsService:
         self.milestones_collection = self.db["milestones"]
         self.next_meets_collection = self.db["next_meets"]
 
+    async def init_indexes(self):
+        try:
+            await self.milestones_collection.create_index("user_id")
+            await self.next_meets_collection.create_index("user_id")
+        except Exception as e:
+            print(f"Error initializing us indexes: {e}")
+
     async def _get_partner_id(self, user_id: str) -> Optional[str]:
         user = await self.users_collection.find_one({"_id": ObjectId(user_id)})
         if user and user.get("is_aligned") and user.get("partner"):
             return user["partner"].get("user_id")
         return None
 
-    async def get_stats(self, user_id: str) -> Dict[str, Any]:
-        user = await self.users_collection.find_one({"_id": ObjectId(user_id)})
+    async def get_stats(self, user_id: str, user_doc: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if user_doc:
+            user = user_doc
+        else:
+            user = await self.users_collection.find_one({"_id": ObjectId(user_id)})
         if not user:
             raise ValueError("User not found.")
-            
+
         if not user.get("is_aligned") or not user.get("relationship_start_date"):
             return None
-            
-        partner_id = await self._get_partner_id(user_id)
+
+        # Reuse already fetched user document to avoid redundant DB roundtrip
+        partner_id = user.get("partner", {}).get("user_id") if user.get("partner") else None
         start_date_str = user["relationship_start_date"]
         start_date = parse_date(start_date_str)
         today = date.today()

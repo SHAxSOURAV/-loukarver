@@ -46,21 +46,26 @@ class SecretService:
         self.users = self.db["users"]
 
     async def init_indexes(self):
-        # Auto-delete secrets at the exact expires_at timestamp
-        await self.secrets_collection.create_index("expires_at", expireAfterSeconds=0)
+        try:
+            # Auto-delete secrets at the exact expires_at timestamp
+            await self.secrets_collection.create_index("expires_at", expireAfterSeconds=0)
+            await self.secrets_collection.create_index([("recipient_id", 1), ("created_at", -1)])
+            await self.secrets_collection.create_index([("sender_id", 1), ("created_at", -1)])
+        except Exception as e:
+            print(f"Error initializing secret indexes: {e}")
 
     async def _get_partner_id(self, user_id: str) -> Optional[str]:
-        user = await self.users.find_one({"_id": ObjectId(user_id)})
+        user = await self.users.find_one({"_id": ObjectId(user_id)}, {"partner.user_id": 1, "is_aligned": 1})
         if user and user.get("is_aligned") and user.get("partner"):
             return user["partner"]["user_id"]
         return None
 
     async def _get_names(self, user_id: str, partner_id: Optional[str]) -> Tuple[str, str]:
-        user = await self.users.find_one({"_id": ObjectId(user_id)})
+        user = await self.users.find_one({"_id": ObjectId(user_id)}, {"name": 1})
         u_name = user.get("name", "User") if user else "User"
         p_name = "Partner"
         if partner_id:
-            pt = await self.users.find_one({"_id": ObjectId(partner_id)})
+            pt = await self.users.find_one({"_id": ObjectId(partner_id)}, {"name": 1})
             if pt:
                 p_name = pt.get("name", "Partner")
         return u_name, p_name
@@ -112,16 +117,30 @@ class SecretService:
         
         return new_doc
 
-    async def get_secrets_for_me(self, user_id: str, page: int = 1, size: int = 10, user_timezone: str = "UTC") -> Tuple[List[Dict[str, Any]], int]:
-        partner_id = await self._get_partner_id(user_id)
-        u_name, p_name = await self._get_names(user_id, partner_id)
+    async def _resolve_user_partner_names(self, user_id: str, user_doc: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
+        if user_doc:
+            user = user_doc
+        else:
+            user = await self.users.find_one({"_id": ObjectId(user_id)}, {"partner": 1, "name": 1, "is_aligned": 1})
+        u_name = user.get("name", "User") if user else "User"
+        p_name = "Partner"
+        partner_id = user.get("partner", {}).get("user_id") if user and user.get("is_aligned") and user.get("partner") else None
+        if partner_id:
+            pt = await self.users.find_one({"_id": ObjectId(partner_id)}, {"name": 1})
+            if pt:
+                p_name = pt.get("name", "Partner")
+        return u_name, p_name
 
+    async def get_secrets_for_me(self, user_id: str, page: int = 1, size: int = 10, user_timezone: str = "UTC", user_doc: Optional[Dict[str, Any]] = None) -> Tuple[List[Dict[str, Any]], int]:
         skip = (page - 1) * size
         query = {"recipient_id": user_id}
         
         cursor = self.secrets_collection.find(query).sort("created_at", -1).skip(skip).limit(size)
-        docs = await cursor.to_list(length=None)
-        total = await self.secrets_collection.count_documents(query)
+        docs_task = cursor.to_list(length=None)
+        total_task = self.secrets_collection.count_documents(query)
+        names_task = self._resolve_user_partner_names(user_id, user_doc)
+        
+        docs, total, (u_name, p_name) = await asyncio.gather(docs_task, total_task, names_task)
 
         try:
             tz = zoneinfo.ZoneInfo(user_timezone)
@@ -148,10 +167,7 @@ class SecretService:
             results.append(d)
         return results, total
 
-    async def get_sent_secrets(self, user_id: str, page: int = 1, size: int = 10, user_timezone: str = "UTC") -> Tuple[List[Dict[str, Any]], int]:
-        partner_id = await self._get_partner_id(user_id)
-        u_name, p_name = await self._get_names(user_id, partner_id)
-
+    async def get_sent_secrets(self, user_id: str, page: int = 1, size: int = 10, user_timezone: str = "UTC", user_doc: Optional[Dict[str, Any]] = None) -> Tuple[List[Dict[str, Any]], int]:
         skip = (page - 1) * size
         query = {
             "sender_id": user_id,
@@ -162,8 +178,11 @@ class SecretService:
         }
         
         cursor = self.secrets_collection.find(query).sort("created_at", -1).skip(skip).limit(size)
-        docs = await cursor.to_list(length=None)
-        total = await self.secrets_collection.count_documents(query)
+        docs_task = cursor.to_list(length=None)
+        total_task = self.secrets_collection.count_documents(query)
+        names_task = self._resolve_user_partner_names(user_id, user_doc)
+        
+        docs, total, (u_name, p_name) = await asyncio.gather(docs_task, total_task, names_task)
 
         try:
             tz = zoneinfo.ZoneInfo(user_timezone)

@@ -1,3 +1,4 @@
+import asyncio
 import re
 import zoneinfo
 from typing import Dict, Any, List, Optional, Tuple
@@ -48,9 +49,16 @@ class DateService:
         self.users = self.db["users"]
 
     async def init_indexes(self):
-        await self.dates_collection.create_index([("creator_id", 1), ("partner_id", 1)])
-        await self.dates_collection.create_index("utc_timestamp")
-        await self.dates_collection.create_index("status")
+        try:
+            await self.dates_collection.create_index([("creator_id", 1), ("partner_id", 1)])
+            await self.dates_collection.create_index([("creator_id", 1), ("utc_timestamp", -1)])
+            await self.dates_collection.create_index([("partner_id", 1), ("utc_timestamp", -1)])
+            await self.dates_collection.create_index([("creator_id", 1), ("utc_timestamp", 1)])
+            await self.dates_collection.create_index([("partner_id", 1), ("utc_timestamp", 1)])
+            await self.dates_collection.create_index("utc_timestamp")
+            await self.dates_collection.create_index("status")
+        except Exception as e:
+            print(f"Error initializing date indexes: {e}")
 
     async def _get_partner_id(self, user_id: str) -> Optional[str]:
         user = await self.users.find_one({"_id": ObjectId(user_id)})
@@ -143,9 +151,26 @@ class DateService:
             
         skip = (page - 1) * size
         cursor = self.dates_collection.find(query).sort(sort_criteria).skip(skip).limit(size)
-        total = await self.dates_collection.count_documents(query)
+        raw_docs, total = await asyncio.gather(
+            cursor.to_list(length=size),
+            self.dates_collection.count_documents(query)
+        )
         
-        dates = [await self._map_date(doc, target_timezone) for doc in await cursor.to_list(length=size)]
+        # Pre-resolve names cache if any document has reviews
+        names_cache: Dict[str, str] = {}
+        reviews_user_ids = set()
+        for doc in raw_docs:
+            if doc.get("reviews"):
+                if doc.get("creator_id"): reviews_user_ids.add(doc["creator_id"])
+                if doc.get("partner_id"): reviews_user_ids.add(doc["partner_id"])
+        
+        if reviews_user_ids:
+            obj_ids = [ObjectId(uid) for uid in reviews_user_ids if ObjectId.is_valid(uid)]
+            if obj_ids:
+                async for u in self.users.find({"_id": {"$in": obj_ids}}, {"name": 1}):
+                    names_cache[str(u["_id"])] = u.get("name", "User")
+
+        dates = [await self._map_date(doc, target_timezone, names_cache=names_cache) for doc in raw_docs]
         return dates, total
 
     async def get_date_by_id(self, date_id: str, user_id: str, user_timezone: str = "UTC") -> Optional[Dict[str, Any]]:
@@ -547,7 +572,7 @@ class DateService:
             
         return await self._map_date(result, doc["timezone"])
 
-    async def _map_date(self, d: Dict[str, Any], user_timezone: str = "UTC") -> Dict[str, Any]:
+    async def _map_date(self, d: Dict[str, Any], user_timezone: str = "UTC", names_cache: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         d["id"] = str(d["_id"])
         if "_id" in d: del d["_id"]
         
@@ -564,7 +589,7 @@ class DateService:
                 d[field] = dt.astimezone(tz)
 
         if d.get("reviews"):
-            names = await self._get_names(d["creator_id"], d["partner_id"])
+            names = names_cache if names_cache is not None else await self._get_names(d["creator_id"], d["partner_id"])
             for r in d["reviews"]:
                 r["user_name"] = names.get(r["user_id"], "User")
                 if "created_at" in r and isinstance(r["created_at"], datetime):

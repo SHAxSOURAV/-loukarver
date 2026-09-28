@@ -16,7 +16,7 @@ async def get_lifecycle_overview(current_user: dict = Depends(get_current_user))
     recent history, and today's phase note.
     """
     try:
-        data = await lifecycle_service.get_cycle_stats(current_user["id"])
+        data = await lifecycle_service.get_cycle_stats(current_user["id"], user_doc=current_user)
         
         stats = None
         if data["stats"]:

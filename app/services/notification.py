@@ -11,6 +11,8 @@ from app.schemas.notification import (
     NotificationCreate, NotificationStatus, NotificationType
 )
 
+import asyncio
+
 class NotificationService:
     def __init__(self) -> None:
         self.client = get_client()
@@ -19,8 +21,13 @@ class NotificationService:
         self.users = self.db["users"]
 
     async def init_indexes(self):
-        await self.notifications_collection.create_index([("recipient_id", 1), ("status", 1)])
-        await self.notifications_collection.create_index("scheduled_for")
+        try:
+            await self.notifications_collection.create_index([("recipient_id", 1), ("scheduled_for", -1)])
+            await self.notifications_collection.create_index([("recipient_id", 1), ("status", 1), ("scheduled_for", 1)])
+            await self.notifications_collection.create_index([("recipient_id", 1), ("status", 1)])
+            await self.notifications_collection.create_index("scheduled_for")
+        except Exception as e:
+            print(f"Index initialization note in notification: {e}")
 
     async def schedule_notification(self, sender_id: str, payload: NotificationCreate) -> Dict[str, Any]:
         new_doc = payload.model_dump()
@@ -106,24 +113,34 @@ class NotificationService:
         if types:
             delivered_query["type"] = {"$in": types}
             
-        await self.notifications_collection.update_many(
-            delivered_query,
-            {"$set": {"status": NotificationStatus.DELIVERED, "delivered_at": now}}
-        )
+        # Fire background task to mark delivered notifications without blocking the response
+        async def _do_update():
+            try:
+                await self.notifications_collection.update_many(
+                    delivered_query,
+                    {"$set": {"status": NotificationStatus.DELIVERED, "delivered_at": now}}
+                )
+            except Exception:
+                pass
+
+        asyncio.create_task(_do_update())
 
         skip = (page - 1) * size
         cursor = self.notifications_collection.find(query).sort("scheduled_for", -1).skip(skip).limit(size)
-        docs = await cursor.to_list(length=None)
-        total = await self.notifications_collection.count_documents(query)
         
         unread_query = {"recipient_id": user_id, "status": {"$ne": NotificationStatus.SEEN}}
         if types:
             unread_query["type"] = {"$in": types}
         if is_hidden is not None:
             unread_query["is_hidden"] = is_hidden
-        unread_count = await self.notifications_collection.count_documents(unread_query)
 
-        return [await self._map_notification(d, user_timezone) for d in docs], total, unread_count
+        docs, total, unread_count = await asyncio.gather(
+            cursor.to_list(length=size),
+            self.notifications_collection.count_documents(query),
+            self.notifications_collection.count_documents(unread_query)
+        )
+
+        return [self._map_notification_sync(d, user_timezone) for d in docs], total, unread_count
 
     async def mark_as_seen(self, notification_id: str, user_id: str) -> bool:
         now_utc = datetime.now(timezone.utc)
@@ -173,6 +190,9 @@ class NotificationService:
         return result.deleted_count
 
     async def _map_notification(self, d: Dict[str, Any], user_timezone: str) -> Dict[str, Any]:
+        return self._map_notification_sync(d, user_timezone)
+
+    def _map_notification_sync(self, d: Dict[str, Any], user_timezone: str) -> Dict[str, Any]:
         d["id"] = str(d["_id"])
         if "_id" in d: del d["_id"]
         

@@ -24,6 +24,13 @@ from app.services.vibe_card import vibe_card_service
 from app.services.play import play_service
 from app.services.vibe_dates import vibe_date_service
 from app.services.vibe_pulse import vibe_pulse_service
+from app.services.us import us_service
+from app.services.lifecycle import lifecycle_service
+from app.services.reports import report_service
+from app.services.proposals import proposal_service
+from app.services.energy import energy_service
+from app.services.watch import watch_service
+from app.services.youtube import youtube_service
 from app.core.config import settings
 from app.core.websocket import ws_manager
 
@@ -83,6 +90,15 @@ async def startup_event():
     await vibe_card_service.init_indexes()
     await vibe_date_service.init_indexes()
     await vibe_pulse_service.init_indexes()
+    await mood_service.init_indexes()
+    await play_service.init_indexes()
+    await us_service.init_indexes()
+    await lifecycle_service.init_indexes()
+    await report_service.init_indexes()
+    await proposal_service.init_indexes()
+    await youtube_service.init_indexes()
+    await energy_service.init_indexes()
+    await watch_service.init_indexes()
     
     # Start background scheduler
     from app.scheduler import start_scheduler
@@ -125,7 +141,7 @@ os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 @app.get("/")
-def root():
+async def root():
     return {"message": "Aligned Backend is Running.."}
 
 @app.websocket("/ws/notifications/{user_id}")

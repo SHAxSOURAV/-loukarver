@@ -18,6 +18,12 @@ class EnergyService:
         self.energy_logs = self.db["energy_logs"]
         self.users = self.db["users"]
 
+    async def init_indexes(self):
+        try:
+            await self.energy_logs.create_index([("user_id", 1), ("created_at", -1)])
+        except Exception as e:
+            print(f"Error initializing energy indexes: {e}")
+
     async def create_energy_log(self, user_id: str, payload: EnergyCreate) -> Dict[str, Any]:
         now = datetime.now(timezone.utc)
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -177,17 +183,21 @@ class EnergyService:
                 )
         return result.matched_count > 0
 
-    async def get_partner_energy(self, user_id: str) -> List[Dict[str, Any]]:
-        user = await self.users.find_one({"_id": ObjectId(user_id)})
-        if not user or not user.get("partner"):
+    async def get_partner_energy(self, user_id: str, partner_id: Optional[str] = None, user_doc: Optional[dict] = None) -> List[Dict[str, Any]]:
+        if not partner_id:
+            user = user_doc if user_doc is not None else await self.users.find_one({"_id": ObjectId(user_id)})
+            if not user or not user.get("partner"):
+                return []
+            partner_id = user["partner"].get("user_id")
+            
+        if not partner_id:
             return []
             
-        partner_id = user["partner"]["user_id"]
         cursor = self.energy_logs.find({
             "user_id": partner_id
         }).sort("created_at", -1).limit(1)
         
-        docs = await cursor.to_list(length=None)
+        docs = await cursor.to_list(length=1)
         results = []
         if docs:
             d = docs[0]

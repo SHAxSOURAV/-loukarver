@@ -26,19 +26,31 @@ class MapService:
         self.users = self.db["users"]
 
     async def init_indexes(self):
-        await self.places_collection.create_index([("creator_id", 1), ("partner_id", 1)])
-        await self.places_collection.create_index("category")
-        await self.places_collection.create_index("city")
+        try:
+            await self.places_collection.create_index([("creator_id", 1), ("created_at", -1)])
+            await self.places_collection.create_index([("partner_id", 1), ("created_at", -1)])
+            await self.places_collection.create_index([("creator_id", 1), ("partner_id", 1)])
+            await self.places_collection.create_index("category")
+            await self.places_collection.create_index("city")
+        except Exception as e:
+            print(f"Index initialization note in map: {e}")
 
     async def _get_partner_id(self, user_id: str) -> Optional[str]:
-        user = await self.users.find_one({"_id": ObjectId(user_id)})
+        user = await self.users.find_one({"_id": ObjectId(user_id)}, {"partner.user_id": 1, "is_aligned": 1})
         if user and user.get("is_aligned") and user.get("partner"):
             return user["partner"]["user_id"]
         return None
 
     async def _get_names(self, user_id: str, partner_id: str) -> Dict[str, str]:
         names = {user_id: "User", partner_id: "Partner"}
-        async for user in self.users.find({"_id": {"$in": [ObjectId(user_id), ObjectId(partner_id)]}}):
+        ids = [ObjectId(user_id)]
+        if partner_id:
+            try:
+                ids.append(ObjectId(partner_id))
+            except Exception:
+                pass
+        cursor = self.users.find({"_id": {"$in": ids}}, {"name": 1})
+        async for user in cursor:
             names[str(user["_id"])] = user.get("name", "User")
         return names
 
@@ -108,7 +120,6 @@ class MapService:
         return await self._map_place(new_doc, payload.timezone, user_id)
 
     async def get_places(self, user_id: str, category: Optional[PlaceCategory] = None, search: Optional[str] = None, page: int = 1, size: int = 20, user_timezone: str = "UTC") -> Tuple[List[Dict[str, Any]], int]:
-        partner_id = await self._get_partner_id(user_id)
         query = {"$or": [{"creator_id": user_id}, {"partner_id": user_id}]}
         
         if category:
@@ -122,12 +133,15 @@ class MapService:
 
         skip = (page - 1) * size
         cursor = self.places_collection.find(query).sort("created_at", -1).skip(skip).limit(size)
-        docs = await cursor.to_list(length=None)
-        total = await self.places_collection.count_documents(query)
+        
+        docs_task = cursor.to_list(length=None)
+        total_task = self.places_collection.count_documents(query)
+        partner_task = self._get_partner_id(user_id)
+        
+        docs, total, partner_id = await asyncio.gather(docs_task, total_task, partner_task)
+        names = await self._get_names(user_id, partner_id or "")
 
-        results = []
-        for d in docs:
-            results.append(await self._map_place(d, user_timezone, user_id))
+        results = [await self._map_place(d, user_timezone, user_id, names=names) for d in docs]
         return results, total
 
     async def get_place_by_id(self, place_id: str, user_id: str, user_timezone: str = "UTC") -> Optional[Dict[str, Any]]:
@@ -385,7 +399,7 @@ class MapService:
             "stats": stats
         }
 
-    async def _map_place(self, d: Dict[str, Any], user_timezone: str, current_user_id: str) -> Dict[str, Any]:
+    async def _map_place(self, d: Dict[str, Any], user_timezone: str, current_user_id: str, names: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         place_id = str(d["_id"]) if "_id" in d else d.get("id")
         d["id"] = place_id
         if "_id" in d: del d["_id"]
@@ -402,8 +416,9 @@ class MapService:
                 d["lat"] = new_lat
                 d["lng"] = new_lng
         
-        partner_id = await self._get_partner_id(current_user_id)
-        names = await self._get_names(current_user_id, partner_id or "")
+        if names is None:
+            partner_id = await self._get_partner_id(current_user_id)
+            names = await self._get_names(current_user_id, partner_id or "")
 
         # Personalization: Add creator name
         d["creator_name"] = names.get(str(d.get("creator_id")), "User")

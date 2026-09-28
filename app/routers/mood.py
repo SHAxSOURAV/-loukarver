@@ -15,7 +15,7 @@ router = APIRouter(prefix="/mood", tags=["Mood"])
 async def get_mood_list(current_user: dict = Depends(get_current_user)):
     """Get the list of available moods to choose from."""
     try:
-        results = await mood_service.get_mood_list(current_user["id"])
+        results = await mood_service.get_mood_list(current_user["id"], user_doc=current_user)
         return MoodListResponse(success=True, data=results)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -18,8 +18,15 @@ class ProposalService:
         self.notifications_collection = self.db["notifications"]
         self.us_service = UsService()
 
+    async def init_indexes(self):
+        try:
+            await self.proposals_collection.create_index([("proposer_id", 1), ("status", 1)])
+            await self.proposals_collection.create_index([("partner_id", 1), ("status", 1)])
+        except Exception as e:
+            print(f"Index initialization note in proposals: {e}")
+
     async def _get_partner_id(self, user_id: str) -> str:
-        user = await self.users_collection.find_one({"_id": ObjectId(user_id)})
+        user = await self.users_collection.find_one({"_id": ObjectId(user_id)}, {"partner.user_id": 1, "is_aligned": 1})
         if user and user.get("is_aligned") and user.get("partner"):
             return user["partner"].get("user_id")
         return None
@@ -114,15 +121,8 @@ class ProposalService:
         return doc
 
     async def get_pending_proposals(self, user_id: str) -> List[Dict[str, Any]]:
-        partner_id = await self._get_partner_id(user_id)
-
-        # Find proposals where the user is EITHER the proposer or the partner
-        query_conditions = [{"proposer_id": user_id}]
-        if partner_id:
-            query_conditions.append({"partner_id": user_id})
-
         cursor = self.proposals_collection.find(
-            {"$or": query_conditions, "status": "pending"}
+            {"$or": [{"proposer_id": user_id}, {"partner_id": user_id}], "status": "pending"}
         )
 
         proposals = []
