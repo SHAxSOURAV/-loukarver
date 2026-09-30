@@ -137,7 +137,7 @@ async def get_privacy_policy():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Privacy Policy - Loukarver</title>
+        <title>Privacy Policy - Aligned: Couples Journal</title>
         {CSS_STYLE}
     </head>
     <body>
@@ -146,7 +146,7 @@ async def get_privacy_policy():
         
         {content}
 
-        <p style="text-align: center; margin-top: 40px; color: #888;">&copy; {current_year} Loukarver. All rights reserved.</p>
+        <p style="text-align: center; margin-top: 40px; color: #888;">&copy; {current_year} Aligned. All rights reserved.</p>
     </body>
     </html>
     """
@@ -176,7 +176,7 @@ async def get_terms_and_conditions():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Terms and Conditions - Loukarver</title>
+        <title>Terms and Conditions - Aligned: Couples Journal</title>
         {CSS_STYLE}
     </head>
     <body>
@@ -185,9 +185,51 @@ async def get_terms_and_conditions():
 
         {content}
 
-        <p style="text-align: center; margin-top: 40px; color: #888;">&copy; {current_year} Loukarver. All rights reserved.</p>
+        <p style="text-align: center; margin-top: 40px; color: #888;">&copy; {current_year} Aligned. All rights reserved.</p>
     </body>
     </html>
     """
     return HTMLResponse(content=html_content)
+
+@router.get("/support", response_class=HTMLResponse)
+async def get_support_page():
+    current_year = datetime.datetime.now().year
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Support & Help Center - Aligned: Couples Journal</title>
+        {CSS_STYLE}
+    </head>
+    <body>
+        <h1>Aligned Support & Help Center</h1>
+        <p class="update-date">Official Customer & Beta Tester Support</p>
+
+        <p>Welcome to the <strong>Aligned: Couples Journal</strong> Support Center. We are here to help you get the most out of your shared rituals, daily connection prompts, and relationship journal.</p>
+
+        <h2>How to Contact Us</h2>
+        <p>If you have any questions, encounter a bug, or need assistance with your account, please reach out to our dedicated support team:</p>
+        <ul>
+            <li><strong>Email:</strong> <a href="mailto:mdsadimhasansourav@gmail.com">mdsadimhasansourav@gmail.com</a></li>
+            <li><strong>Response Time:</strong> Within 24-48 business hours</li>
+        </ul>
+
+        <h2>Frequently Asked Questions</h2>
+        <h3>How do I pair with my partner?</h3>
+        <p>Once you register, share your 6-character Partner Alignment Code with your partner or scan their QR code in the app. Once they enter your code or scan the QR code, your accounts are synchronized instantly.</p>
+
+        <h3>Is our data private?</h3>
+        <p>Yes. Your responses, check-ins, vibe checks, and photos are exclusively shared between you and your paired partner. We do not sell your personal data to any third party.</p>
+
+        <h3>How do I delete my account and data?</h3>
+        <p>In accordance with Apple App Store Guideline 5.1.1(v), you can delete your account directly inside the app at any time by going to <strong>Settings / Profile &rarr; Delete Account</strong>. Alternatively, you can email us at <a href="mailto:mdsadimhasansourav@gmail.com">mdsadimhasansourav@gmail.com</a> with the subject "Data Deletion Request". All your private entries, photos, and messages will be permanently expunged from our database.</p>
+
+        <p style="text-align: center; margin-top: 50px; color: #888;">&copy; {current_year} Aligned. All rights reserved.</p>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
 
