@@ -1,31 +1,46 @@
 import { createBrowserRouter } from "react-router-dom";
+import React, { Suspense } from "react";
 import DashboardLayout from "../layout/dashboardLayout/DashboardLayout";
-import Dashboard from "../components/Dashboard/Dashboard";
-import UserManagement from "../page/UserManagement/UserManagement";
-import CreatorManagement from "../page/CreatorManagement/CreatorManagement";
-
-import Subscription from "../page/Subscription/Subscription";
-
-import Profile from "../page/Settings/Profile";
-import TermsCondition from "../page/Settings/TermsCondition";
-import FAQ from "../page/Settings/FAQ";
-import PrivacyPolicy from "../page/Settings/PrivacyPolicy";
-import Categories from "../page/CategoriesManagement/Categories";
-import Subcategory from "../page/CategoriesManagement/Subcategory";
-
-import ForgetPass from "../Auth/ForgetPass";
-import Verify from "../Auth/Verify";
-import ResetPass from "../Auth/ResetPass";
-import Notification from "../page/Notification/Notification";
-import About from "../page/Settings/About";
-import Login from "../Auth/Login";
-import Analytics from "../page/analytics/Analytics";
-import Collaboration from "../page/collaboration/Collaboration";
-import Transaction from "../page/transaction/Transaction";
-import Report from "../page/report/Report";
-import Signup from "../Auth/Signup";
-
 import ProtectedRoute from "../protectedRoute/ProtectedRoute";
+
+// Lazy load all page components to prevent a single blocked module
+// (e.g. by ad-blockers) from crashing the entire app
+const Dashboard = React.lazy(() => import("../components/Dashboard/Dashboard"));
+const UserManagement = React.lazy(() => import("../page/UserManagement/UserManagement"));
+const CreatorManagement = React.lazy(() => import("../page/CreatorManagement/CreatorManagement"));
+const Subscription = React.lazy(() => import("../page/Subscription/Subscription"));
+const Profile = React.lazy(() => import("../page/Settings/Profile"));
+const TermsCondition = React.lazy(() => import("../page/Settings/TermsCondition"));
+const FAQ = React.lazy(() => import("../page/Settings/FAQ"));
+const PrivacyPolicy = React.lazy(() => import("../page/Settings/PrivacyPolicy"));
+const Categories = React.lazy(() => import("../page/CategoriesManagement/Categories"));
+const Subcategory = React.lazy(() => import("../page/CategoriesManagement/Subcategory"));
+const ForgetPass = React.lazy(() => import("../Auth/ForgetPass"));
+const Verify = React.lazy(() => import("../Auth/Verify"));
+const ResetPass = React.lazy(() => import("../Auth/ResetPass"));
+const Notification = React.lazy(() => import("../page/Notification/Notification"));
+const About = React.lazy(() => import("../page/Settings/About"));
+const Login = React.lazy(() => import("../Auth/Login"));
+const Analytics = React.lazy(() => import("../page/appInsights/Analytics"));
+const Collaboration = React.lazy(() => import("../page/collaboration/Collaboration"));
+const Transaction = React.lazy(() => import("../page/transaction/Transaction"));
+const Report = React.lazy(() => import("../page/report/Report"));
+const Signup = React.lazy(() => import("../Auth/Signup"));
+
+// Fallback component shown while lazy-loaded components are loading
+const LazyFallback = () => (
+  <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
+    <div style={{ width: "40px", height: "40px", border: "4px solid #e5e7eb", borderTop: "4px solid #8B4513", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+    <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+  </div>
+);
+
+// Wrap element in Suspense for lazy loading
+const withSuspense = (Component) => (
+  <Suspense fallback={<LazyFallback />}>
+    <Component />
+  </Suspense>
+);
 
 export const router = createBrowserRouter([
   {
@@ -38,97 +53,89 @@ export const router = createBrowserRouter([
     children: [
       {
         path: "/",
-        element: <Dashboard></Dashboard>,
+        element: withSuspense(Dashboard),
       },
       {
         path: "/dashboard/UserManagement",
-        element: <UserManagement></UserManagement>,
+        element: withSuspense(UserManagement),
       },
       {
         path: "/dashboard/analytics",
-        element: <Analytics></Analytics>
+        element: withSuspense(Analytics),
       },
        {
         path: "/dashboard/collaboration",
-        element: <Collaboration></Collaboration>
+        element: withSuspense(Collaboration),
       },
        {
         path: "/dashboard/transaction",
-        element: <Transaction></Transaction>
+        element: withSuspense(Transaction),
       },
        {
         path: "/dashboard/report",
-        element: <Report></Report>
+        element: withSuspense(Report),
       },
       {
         path: "/dashboard/CreatorManagement",
-        element: <CreatorManagement></CreatorManagement>,
+        element: withSuspense(CreatorManagement),
       },
       {
         path: "/dashboard/CategoriesManagement/Categories",
-        element: <Categories></Categories>,
-      },
-      {
-        path: "/dashboard/CategoriesManagement/Categories",
-        element: <Categories></Categories>,
+        element: withSuspense(Categories),
       },
       {
         path: "/dashboard/CategoriesManagement/Subcategory",
-        element: <Subcategory></Subcategory>,
+        element: withSuspense(Subcategory),
       },
       {
         path: "/dashboard/Subscription",
-        element: <Subscription></Subscription>,
+        element: withSuspense(Subscription),
       },
       {
         path: "/dashboard/Settings/profile",
-        element: <Profile></Profile>,
-      },
-      {
-        path: "/dashboard/Settings/profile",
-        element: <Profile></Profile>,
+        element: withSuspense(Profile),
       },
       {
         path: "/dashboard/Settings/notification",
-        element: <Notification></Notification>,
+        element: withSuspense(Notification),
       },
       {
         path: "/dashboard/Settings/Terms&Condition",
-        element: <TermsCondition></TermsCondition>,
+        element: withSuspense(TermsCondition),
       },
       {
         path: "/dashboard/Settings/FAQ",
-        element: <FAQ></FAQ>,
+        element: withSuspense(FAQ),
       },
       {
         path: "/dashboard/Settings/aboutUs",
-        element: <About></About>,
+        element: withSuspense(About),
       },
       {
         path: "/dashboard/Settings/PrivacyPolicy",
-        element: <PrivacyPolicy></PrivacyPolicy>,
+        element: withSuspense(PrivacyPolicy),
       },
     ],
   },
 
   {
     path: "/login",
-    element: <Login></Login>,
+    element: withSuspense(Login),
   },
   {
     path: "/signup",
-    element: <Signup></Signup>,
+    element: withSuspense(Signup),
   },
   {
     path: "/forgot-password",
-    element: <ForgetPass></ForgetPass>,
+    element: withSuspense(ForgetPass),
   },
   {
     path: "/verification",
-    element: <Verify></Verify>,
+    element: withSuspense(Verify),
   },
   {
     path: "/reset-password",
-    element: <ResetPass></ResetPass>,
+    element: withSuspense(ResetPass),
   },
 ]);

@@ -1,7 +1,32 @@
 import { createSlice } from '@reduxjs/toolkit';
 
+// Safe storage helpers — Brave browser may block storage access
+const safeGetItem = (storage, key) => {
+  try {
+    return storage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const safeSetItem = (storage, key, value) => {
+  try {
+    storage.setItem(key, value);
+  } catch {
+    // Storage blocked — token will only live in Redux state
+  }
+};
+
+const safeRemoveItem = (storage, key) => {
+  try {
+    storage.removeItem(key);
+  } catch {
+    // Storage blocked — nothing to remove
+  }
+};
+
 const getInitialToken = () => {
-  return localStorage.getItem('token') || sessionStorage.getItem('token') || null;
+  return safeGetItem(localStorage, 'token') || safeGetItem(sessionStorage, 'token') || null;
 };
 
 const initialState = {
@@ -17,17 +42,17 @@ export const authSlice = createSlice({
       const { token, rememberMe } = action.payload;
       state.token = token;
       if (rememberMe) {
-        localStorage.setItem('token', token);
-        sessionStorage.removeItem('token');
+        safeSetItem(localStorage, 'token', token);
+        safeRemoveItem(sessionStorage, 'token');
       } else {
-        sessionStorage.setItem('token', token);
-        localStorage.removeItem('token');
+        safeSetItem(sessionStorage, 'token', token);
+        safeRemoveItem(localStorage, 'token');
       }
     },
     logout: (state) => {
       state.token = null;
-      localStorage.removeItem('token');
-      sessionStorage.removeItem('token');
+      safeRemoveItem(localStorage, 'token');
+      safeRemoveItem(sessionStorage, 'token');
     },
   },
 });
