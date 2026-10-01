@@ -81,7 +81,7 @@ async def main():
     # 2. Update Privacy Policy in MongoDB
     privacy_html = """
     <h2>1. Introduction</h2>
-    <p>Aligned: Couples Journal ("Aligned", "we", "our", or "us") is dedicated to protecting your personal privacy. This Privacy Policy details how we collect, use, store, and safeguard your information when you use our mobile application and associated web services.</p>
+    <p>Samesy ("Samesy", "we", "our", or "us") is dedicated to protecting your personal privacy. This Privacy Policy details how we collect, use, store, and safeguard your information when you use our mobile application and associated web services.</p>
     
     <h2>2. Information We Collect</h2>
     <p>To provide an intimate, synchronized, and engaging experience for two, we collect the following types of information:</p>
@@ -94,7 +94,7 @@ async def main():
     </ul>
 
     <h2>3. How We Use Your Data</h2>
-    <p>Your data is used solely to deliver the core functionality of Aligned, including:</p>
+    <p>Your data is used solely to deliver the core functionality of Samesy, including:</p>
     <ul>
         <li>Pairing your account securely with your designated partner.</li>
         <li>Synchronizing shared reflections, answers, and date plans in real-time.</li>
@@ -115,7 +115,7 @@ async def main():
     <p>Upon deletion, all your profile details, answers, memories, and media will be permanently removed from our active database.</p>
 
     <h2>6. Children's Privacy</h2>
-    <p>Aligned is strictly designed for adults and couples aged 17 and older. We do not knowingly collect personal data from anyone under the age of 17.</p>
+    <p>Samesy is strictly designed for adults and couples aged 17 and older. We do not knowingly collect personal data from anyone under the age of 17.</p>
 
     <h2>7. Contact Information</h2>
     <p>For questions or privacy concerns regarding this Privacy Policy, please contact our Data Protection Officer:</p>
@@ -125,19 +125,19 @@ async def main():
     # 3. Update Terms and Conditions in MongoDB
     terms_html = """
     <h2>1. Agreement to Terms</h2>
-    <p>By downloading, accessing, or using Aligned: Couples Journal ("the App"), you agree to be bound by these Terms and Conditions. If you do not agree with any part of these Terms, you must discontinue using the App immediately.</p>
+    <p>By downloading, accessing, or using Samesy ("the App"), you agree to be bound by these Terms and Conditions. If you do not agree with any part of these Terms, you must discontinue using the App immediately.</p>
 
     <h2>2. Eligibility</h2>
-    <p>You must be at least 17 years old to create an account and use the App. By using Aligned, you represent and warrant that you meet this age requirement.</p>
+    <p>You must be at least 17 years old to create an account and use the App. By using Samesy, you represent and warrant that you meet this age requirement.</p>
 
     <h2>3. User Accounts and Security</h2>
     <p>You are responsible for maintaining the confidentiality of your login credentials and for all activities that occur under your account. You agree to notify us immediately of any unauthorized use of your account.</p>
 
     <h2>4. Partner Pairing and Shared Content</h2>
-    <p>Aligned enables two users to pair their accounts via a unique invitation code or QR code. When paired, content you submit (such as check-ins, journal threads, answers to vibe questions, and date ideas) becomes visible to your paired partner. You are solely responsible for ensuring you only pair with an individual you trust.</p>
+    <p>Samesy enables two users to pair their accounts via a unique invitation code or QR code. When paired, content you submit (such as check-ins, journal threads, answers to vibe questions, and date ideas) becomes visible to your paired partner. You are solely responsible for ensuring you only pair with an individual you trust.</p>
 
     <h2>5. Acceptable Use and Content Standards</h2>
-    <p>You agree not to use Aligned to:</p>
+    <p>You agree not to use Samesy to:</p>
     <ul>
         <li>Upload, share, or transmit any content that is unlawful, harmful, abusive, harassing, defamatory, or obscene.</li>
         <li>Violate the intellectual property or privacy rights of any third party.</li>
@@ -148,7 +148,7 @@ async def main():
     <p>We reserve the right to suspend or terminate accounts that violate these Terms or engage in abusive behavior. You may terminate your account at any time via the in-app account deletion setting.</p>
 
     <h2>7. Disclaimer of Warranties and Limitation of Liability</h2>
-    <p>The App is provided on an "AS IS" and "AS AVAILABLE" basis without warranties of any kind. Aligned is a relationship journaling and communication tool and is not a substitute for licensed couples therapy, marital counseling, or professional psychiatric advice.</p>
+    <p>The App is provided on an "AS IS" and "AS AVAILABLE" basis without warranties of any kind. Samesy is a relationship journaling and communication tool and is not a substitute for licensed couples therapy, marital counseling, or professional psychiatric advice.</p>
 
     <h2>8. Standard Apple End User License Agreement (EULA)</h2>
     <p>These terms incorporate and apply alongside Apple's standard Licensed Application End User License Agreement (EULA) accessible at <a href="https://www.apple.com/legal/internet-services/itunes/dev/stdeula/" target="_blank">Apple Standard EULA</a>.</p>

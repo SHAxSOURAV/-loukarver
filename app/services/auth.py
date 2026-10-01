@@ -62,18 +62,18 @@ def decode_token(token: str, secret: Optional[str] = None) -> Optional[dict]:
     except jwt.PyJWTError:
         return None
 
-def send_otp_email(to_email: str, otp: str, subject: str = "Verify your email - Aligned") -> bool:
+def send_otp_email(to_email: str, otp: str, subject: str = "Verify your email - Samesy") -> bool:
     if not settings.SMTP_HOST or not settings.SMTP_USER or not settings.SMTP_PASSWORD:
         print(f"[SMTP Warning] Credentials missing in .env, skipping email to {to_email}. OTP is {otp}")
         return False
         
     try:
         msg = MIMEMultipart()
-        msg['From'] = f"Aligned <{settings.FROM_EMAIL or settings.SMTP_USER}>"
+        msg['From'] = f"Samesy <{settings.FROM_EMAIL or settings.SMTP_USER}>"
         msg['To'] = to_email
         msg['Subject'] = subject
         
-        plain_body = f"""Welcome to Aligned. Here is your key to get in.
+        plain_body = f"""Welcome to Samesy. Here is your key to get in.
         
 Your One-Time Password (OTP) is: {otp}
 
@@ -91,8 +91,8 @@ If you didn't request this, you can safely ignore this email.
         </head>
         <body style="font-family: 'Inter', Arial, sans-serif; background-color: #EFE7DD; padding: 40px 20px; color: #1A1614; margin: 0;">
             <div style="max-width: 500px; margin: 0 auto; background: #FFFFFF; border-radius: 16px; padding: 40px; box-shadow: 0 10px 25px rgba(26, 22, 20, 0.05); border: 1px solid #C9BDA5;">
-                <h1 style="font-family: 'Playfair Display', serif; color: #B8553E; text-align: center; margin-bottom: 8px; font-size: 32px; font-weight: 600; letter-spacing: -0.5px;">Aligned.</h1>
-                <p style="font-family: 'Playfair Display', serif; font-style: italic; text-align: center; color: #8A7E6C; margin-top: 0; margin-bottom: 32px; font-size: 16px;">Welcome to Aligned. Here is your key to get in.</p>
+                <h1 style="font-family: 'Playfair Display', serif; color: #B8553E; text-align: center; margin-bottom: 8px; font-size: 32px; font-weight: 600; letter-spacing: -0.5px;">Samesy.</h1>
+                <p style="font-family: 'Playfair Display', serif; font-style: italic; text-align: center; color: #8A7E6C; margin-top: 0; margin-bottom: 32px; font-size: 16px;">Welcome to Samesy. Here is your key to get in.</p>
                 
                 <div style="font-size: 36px; font-family: 'Inter', sans-serif; font-weight: 500; text-align: center; margin: 40px 0; letter-spacing: 8px; color: #1A1614; background: #EFE7DD; padding: 24px; border-radius: 12px; border: 1px dashed #B8553E;">
                     {otp}
@@ -156,7 +156,7 @@ class AuthService:
                 )
                 existing.update(update_fields)
                 existing["id"] = str(existing["_id"])
-                send_otp_email(email, otp, subject="Verify your email - Loukarver")
+                send_otp_email(email, otp, subject="Verify your email - Samesy")
                 return existing
 
             if existing.get("is_verified"):
@@ -172,7 +172,7 @@ class AuthService:
                 }}
             )
             existing["id"] = str(existing["_id"])
-            send_otp_email(email, otp, subject="Verify your email - Loukarver")
+            send_otp_email(email, otp, subject="Verify your email - Samesy")
             return existing
             
         # Generate unique secret key for relationship
@@ -215,7 +215,7 @@ class AuthService:
             print(f"Error sending admin notification: {e}")
         
         # Deliver SMTP verification email
-        send_otp_email(email, otp, subject="Verify your email - Loukarver")
+        send_otp_email(email, otp, subject="Verify your email - Samesy")
         
         return new_user
 
@@ -263,7 +263,7 @@ class AuthService:
         )
         
         # Resend SMTP email
-        send_otp_email(email, otp, subject="Resend verification email - Loukarver")
+        send_otp_email(email, otp, subject="Resend verification email - Samesy")
         return True
 
     async def signin(self, payload: SigninRequest) -> Dict[str, Any]:
@@ -327,7 +327,7 @@ class AuthService:
                 )
                 existing.update(update_fields)
                 existing["id"] = str(existing["_id"])
-                send_otp_email(email, otp, subject="Verify your admin email - Loukarver")
+                send_otp_email(email, otp, subject="Verify your admin email - Samesy")
                 return existing
 
             if existing.get("is_verified"):
@@ -343,7 +343,7 @@ class AuthService:
                 }}
             )
             existing["id"] = str(existing["_id"])
-            send_otp_email(email, otp, subject="Verify your admin email - Loukarver")
+            send_otp_email(email, otp, subject="Verify your admin email - Samesy")
             return existing
             
         secret_key = await relationship_service.generate_unique_secret_key()
@@ -366,7 +366,7 @@ class AuthService:
         result = await self.collection.insert_one(new_admin)
         new_admin["id"] = str(result.inserted_id)
         
-        send_otp_email(email, otp, subject="Verify your admin email - Loukarver")
+        send_otp_email(email, otp, subject="Verify your admin email - Samesy")
         return new_admin
 
     async def admin_signin(self, payload: SigninRequest) -> Dict[str, Any]:
@@ -505,7 +505,7 @@ class AuthService:
         )
         
         # Deliver password reset OTP email
-        send_otp_email(email, otp, subject="Password Reset Request - Loukarver")
+        send_otp_email(email, otp, subject="Password Reset Request - Samesy")
         return True
 
     async def reset_password(self, payload: ResetPasswordRequest) -> bool:

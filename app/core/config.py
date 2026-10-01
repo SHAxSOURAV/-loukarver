@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "loukarver"
+    PROJECT_NAME: str = "samesy"
     API_V1_STR: str = "/api"
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000

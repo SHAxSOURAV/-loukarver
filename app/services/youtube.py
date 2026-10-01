@@ -147,7 +147,7 @@ class YouTubeMusicService:
             data = {
                 "snippet": {
                     "title": "Songs for us.",
-                    "description": "Synced across our accounts by Aligned app."
+                    "description": "Synced across our accounts by Samesy app."
                 },
                 "status": {
                     "privacyStatus": "private"

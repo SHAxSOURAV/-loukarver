@@ -112,7 +112,7 @@ class SecretService:
             partner_id, 
             f"New Secret from {u_name}!", 
             "They sent you something for your eyes only 🤫",
-            {"url": "loukarver://connect"}
+            {"url": "samesy://connect"}
         ))
         
         return new_doc
@@ -276,7 +276,7 @@ class SecretService:
             doc["sender_id"], 
             f"{u_name} asked to rewatch!", 
             "They want to see your secret one more time.",
-            {"url": "loukarver://connect"}
+            {"url": "samesy://connect"}
         ))
         
     async def approve_rewatch(self, secret_id: str, user_id: str):
@@ -296,7 +296,7 @@ class SecretService:
             doc["recipient_id"], 
             f"{u_name} Approved!", 
             "You have 24 hours to rewatch their secret.",
-            {"url": "loukarver://secrethistory"}
+            {"url": "samesy://secrethistory"}
         ))
 
     async def decline_rewatch(self, secret_id: str, user_id: str):
@@ -316,7 +316,7 @@ class SecretService:
             doc["recipient_id"], 
             f"Rewatch Denied", 
             f"{u_name} chose to keep it a secret.",
-            {"url": "loukarver://connect"}
+            {"url": "samesy://connect"}
         ))
 
     async def revoke_secret(self, secret_id: str, user_id: str):

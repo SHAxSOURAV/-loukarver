@@ -73,8 +73,8 @@ CSS_STYLE = """
 </style>
 """
 
-DEFAULT_PRIVACY = "<p>Welcome to Loukarver. Privacy policy coming soon...</p>"
-DEFAULT_TERMS = "<p>Welcome to Loukarver. Terms and conditions coming soon...</p>"
+DEFAULT_PRIVACY = "<p>Welcome to Samesy. Privacy policy coming soon...</p>"
+DEFAULT_TERMS = "<p>Welcome to Samesy. Terms and conditions coming soon...</p>"
 
 @router.get("/api/docs/{doc_type}", response_model=LegalDocumentResponse)
 async def get_legal_doc_api(doc_type: str):
@@ -137,7 +137,7 @@ async def get_privacy_policy():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Privacy Policy - Aligned: Couples Journal</title>
+        <title>Privacy Policy - Samesy</title>
         {CSS_STYLE}
     </head>
     <body>
@@ -146,7 +146,7 @@ async def get_privacy_policy():
         
         {content}
 
-        <p style="text-align: center; margin-top: 40px; color: #888;">&copy; {current_year} Aligned. All rights reserved.</p>
+        <p style="text-align: center; margin-top: 40px; color: #888;">&copy; {current_year} Samesy. All rights reserved.</p>
     </body>
     </html>
     """
@@ -176,7 +176,7 @@ async def get_terms_and_conditions():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Terms and Conditions - Aligned: Couples Journal</title>
+        <title>Terms and Conditions - Samesy</title>
         {CSS_STYLE}
     </head>
     <body>
@@ -185,7 +185,7 @@ async def get_terms_and_conditions():
 
         {content}
 
-        <p style="text-align: center; margin-top: 40px; color: #888;">&copy; {current_year} Aligned. All rights reserved.</p>
+        <p style="text-align: center; margin-top: 40px; color: #888;">&copy; {current_year} Samesy. All rights reserved.</p>
     </body>
     </html>
     """
@@ -200,14 +200,14 @@ async def get_support_page():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Support & Help Center - Aligned: Couples Journal</title>
+        <title>Support & Help Center - Samesy</title>
         {CSS_STYLE}
     </head>
     <body>
-        <h1>Aligned Support & Help Center</h1>
+        <h1>Samesy Support & Help Center</h1>
         <p class="update-date">Official Customer & Beta Tester Support</p>
 
-        <p>Welcome to the <strong>Aligned: Couples Journal</strong> Support Center. We are here to help you get the most out of your shared rituals, daily connection prompts, and relationship journal.</p>
+        <p>Welcome to the <strong>Samesy</strong> Support Center. We are here to help you get the most out of your shared rituals, daily connection prompts, and relationship journal.</p>
 
         <h2>How to Contact Us</h2>
         <p>If you have any questions, encounter a bug, or need assistance with your account, please reach out to our dedicated support team:</p>
@@ -226,7 +226,7 @@ async def get_support_page():
         <h3>How do I delete my account and data?</h3>
         <p>In accordance with Apple App Store Guideline 5.1.1(v), you can delete your account directly inside the app at any time by going to <strong>Settings / Profile &rarr; Delete Account</strong>. Alternatively, you can email us at <a href="mailto:mdsadimhasansourav@gmail.com">mdsadimhasansourav@gmail.com</a> with the subject "Data Deletion Request". All your private entries, photos, and messages will be permanently expunged from our database.</p>
 
-        <p style="text-align: center; margin-top: 50px; color: #888;">&copy; {current_year} Aligned. All rights reserved.</p>
+        <p style="text-align: center; margin-top: 50px; color: #888;">&copy; {current_year} Samesy. All rights reserved.</p>
     </body>
     </html>
     """
