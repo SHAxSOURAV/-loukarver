@@ -152,8 +152,8 @@ const Header = () => {
     setPlacement(e.target.value);
   };
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    sessionStorage.removeItem("token");
+    try { localStorage.removeItem("token"); } catch {}
+    try { sessionStorage.removeItem("token"); } catch {}
     navigate("/login");
   };
   return (
