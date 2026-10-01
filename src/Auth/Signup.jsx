@@ -48,7 +48,7 @@ const Signup = () => {
         {/* Title */}
         <h2 className="text-2xl font-semibold text-gray-900 mb-2">Create an Account</h2>
         <p className="text-gray-600 mb-6 text-sm">
-          Sign up to access the Loukarver admin dashboard.
+          Sign up to access the Samesy admin dashboard.
         </p>
 
         {/* Ant Design Form */}

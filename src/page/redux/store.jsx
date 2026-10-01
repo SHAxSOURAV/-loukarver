@@ -6,9 +6,34 @@ import storage from "redux-persist/lib/storage";
 import { baseApi } from './api/baseApi';
 import { authSlice } from './features/auth/authSlice';
 
+// Safe storage wrapper — falls back to a no-op if localStorage is blocked (e.g. Brave)
+const createSafeStorage = (baseStorage) => ({
+    getItem: async (key) => {
+        try {
+            return await baseStorage.getItem(key);
+        } catch {
+            return null;
+        }
+    },
+    setItem: async (key, value) => {
+        try {
+            await baseStorage.setItem(key, value);
+        } catch {
+            // Storage blocked
+        }
+    },
+    removeItem: async (key) => {
+        try {
+            await baseStorage.removeItem(key);
+        } catch {
+            // Storage blocked
+        }
+    },
+});
+
 const persistConfig = {
     key: "quiz-app",
-    storage,
+    storage: createSafeStorage(storage),
     blacklist: ["baseApi", "logInUser"], // Prevent persisting API cache and auth
 };
 
