@@ -75,6 +75,25 @@ async def main():
     await db.users.replace_one({"email": "apple.review@aligned.app"}, doc1, upsert=True)
     await db.users.replace_one({"email": "partner.review@aligned.app"}, doc2, upsert=True)
 
+    # Also seed samesy.app test accounts for reviewers
+    u3 = await db.users.find_one({"email": "apple.review@samesy.app"})
+    u4 = await db.users.find_one({"email": "partner.review@samesy.app"})
+    u3_id = u3["_id"] if u3 else ObjectId()
+    u4_id = u4["_id"] if u4 else ObjectId()
+
+    samesy_doc1 = dict(doc1)
+    samesy_doc1["_id"] = u3_id
+    samesy_doc1["email"] = "apple.review@samesy.app"
+    samesy_doc1["partner"] = str(u4_id)
+
+    samesy_doc2 = dict(doc2)
+    samesy_doc2["_id"] = u4_id
+    samesy_doc2["email"] = "partner.review@samesy.app"
+    samesy_doc2["partner"] = str(u3_id)
+
+    await db.users.replace_one({"email": "apple.review@samesy.app"}, samesy_doc1, upsert=True)
+    await db.users.replace_one({"email": "partner.review@samesy.app"}, samesy_doc2, upsert=True)
+
     test_u = await db.users.find_one({"email": "apple.review@aligned.app"})
     print("Apple Review User login verified:", verify_password(reviewer_pass, test_u["password_hash"]))
 
