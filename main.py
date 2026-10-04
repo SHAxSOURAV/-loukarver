@@ -31,6 +31,7 @@ from app.services.proposals import proposal_service
 from app.services.energy import energy_service
 from app.services.watch import watch_service
 from app.services.youtube import youtube_service
+from app.services.relationships import relationship_service
 from app.core.config import settings
 from app.core.websocket import ws_manager
 
@@ -74,6 +75,7 @@ from app.tasks.date_watcher import start_date_watcher
 
 @app.on_event("startup")
 async def startup_event():
+    await relationship_service.init_indexes()
     await streak_system.init_indexes()
     await mood_service.seed_defaults()
     await idea_service.init_indexes()

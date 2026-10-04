@@ -42,7 +42,7 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
     Retrieves the relationship profile details of the authenticated user.
     """
     try:
-        data = await relationship_service.get_relationship_profile(current_user["id"])
+        data = await relationship_service.get_relationship_profile(current_user["id"], user=current_user)
         return RelationshipResponse(
             success=True,
             message="Relationship details retrieved successfully!",
@@ -60,7 +60,7 @@ async def get_partner_profile(current_user: dict = Depends(get_current_user)):
     Retrieves the relationship profile details of the aligned partner.
     """
     try:
-        data = await relationship_service.get_partner_details(current_user["id"])
+        data = await relationship_service.get_partner_details(current_user["id"], user=current_user)
         return RelationshipResponse(
             success=True,
             message="Partner details retrieved successfully!",
@@ -95,7 +95,7 @@ async def create_relationship(submission: RelationshipCreate, current_user: dict
     - is logn distance relation (or is_long_distance) [true/false]
     """
     try:
-        saved_data = await relationship_service.update_relationship_profile(current_user["id"], submission)
+        saved_data = await relationship_service.update_relationship_profile(current_user["id"], submission, user=current_user)
         return RelationshipResponse(
             success=True,
             message="Relationship details saved successfully!",
@@ -132,7 +132,7 @@ async def create_alignment_request_endpoint(payload: AlignRequest, current_user:
 async def get_alignment_request_status_endpoint(current_user: dict = Depends(get_current_user)):
     """Gets current incoming and outgoing alignment requests."""
     try:
-        data = await relationship_service.get_alignment_request_status(current_user["id"])
+        data = await relationship_service.get_alignment_request_status(current_user["id"], user=current_user)
         return {
             "success": True,
             "data": data
@@ -189,7 +189,7 @@ async def cancel_alignment_request_endpoint(payload: CancelAlignmentRequest, cur
 async def regenerate_aligned_key_endpoint(current_user: dict = Depends(get_current_user)):
     """Generates a new Aligned secret key for the unaligned user."""
     try:
-        new_key = await relationship_service.regenerate_aligned_key(current_user["id"])
+        new_key = await relationship_service.regenerate_aligned_key(current_user["id"], user=current_user)
         return {
             "success": True,
             "message": "New secret key generated successfully.",
@@ -342,7 +342,7 @@ async def upload_photo(file: UploadFile = File(...), current_user: dict = Depend
 async def get_my_photos(current_user: dict = Depends(get_current_user)):
     """Retrieves all profile photos for the current user."""
     try:
-        data = await relationship_service.get_profile_photos(current_user["id"])
+        data = await relationship_service.get_profile_photos(current_user["id"], user=current_user)
         return {"success": True, "data": data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get photos: {str(e)}")
@@ -378,13 +378,15 @@ async def delete_photo_item(photo_id: str, current_user: dict = Depends(get_curr
 async def get_photo(user_id: str, current_user: dict = Depends(get_current_user)):
     """Retrieves the profile photo if the requester is the owner or their aligned partner."""
     try:
-        if current_user["id"] != user_id:
+        if current_user["id"] == user_id:
+            file_path = current_user.get("profile_photo_url")
+        else:
             # Check if partner
             partner_info = current_user.get("partner")
             if not partner_info or partner_info.get("user_id") != user_id:
                 raise HTTPException(status_code=403, detail="Not authorized to view this photo.")
-                
-        file_path = await relationship_service.get_profile_photo_path(user_id)
+            file_path = await relationship_service.get_profile_photo_path(user_id)
+            
         if not file_path:
             raise HTTPException(status_code=404, detail="Photo not found.")
             
@@ -407,7 +409,7 @@ async def get_photo(user_id: str, current_user: dict = Depends(get_current_user)
 async def delete_photo(current_user: dict = Depends(get_current_user)):
     """Deletes the current user's profile photo."""
     try:
-        file_path = await relationship_service.get_profile_photo_path(current_user["id"])
+        file_path = current_user.get("profile_photo_url")
         if file_path:
             if "amazonaws.com" in file_path:
                 await s3_service.delete_file(file_path)
@@ -423,7 +425,7 @@ async def delete_photo(current_user: dict = Depends(get_current_user)):
 async def get_aligned_sync_summary(timezone: str = "UTC", current_user: dict = Depends(get_current_user)):
     """Get the combined sync score and breakdown for the user and their Aligned partner."""
     try:
-        return await relationship_service.get_sync_summary(current_user["id"], timezone)
+        return await relationship_service.get_sync_summary(current_user["id"], timezone, user=current_user)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:

@@ -18,6 +18,28 @@ class RelationshipService:
         self.collection = self.db["users"]
         self.requests_collection = self.db["alignment_requests"]
 
+    async def init_indexes(self):
+        """Initializes database indexes for high-speed queries on users, requests, checkins, rituals, and threads."""
+        index_specs = [
+            (self.collection, "email", {}),
+            (self.collection, "secret_key", {}),
+            (self.collection, "partner.user_id", {"sparse": True}),
+            (self.requests_collection, [("receiver_id", 1), ("status", 1)], {}),
+            (self.requests_collection, [("sender_id", 1), ("status", 1)], {}),
+            (self.requests_collection, [("created_at", -1)], {}),
+            (self.db["check_ins"], [("user_id", 1), ("created_at", -1)], {}),
+            (self.db["check_ins"], [("user_id", 1), ("date", 1)], {}),
+            (self.db["ritual_completions"], [("user_id", 1), ("created_at", -1)], {}),
+            (self.db["ritual_completions"], [("user_id", 1), ("ritual_type", 1), ("created_at", -1)], {}),
+            (self.db["thread_messages"], [("creator_id", 1), ("created_at", -1)], {}),
+            (self.db["thread_messages"], [("creator_id", 1), ("category", 1), ("created_at", -1)], {})
+        ]
+        for coll, spec, kwargs in index_specs:
+            try:
+                await coll.create_index(spec, **kwargs)
+            except Exception as e:
+                print(f"[Index Note] Could not create index on {coll.name} {spec}: {e}")
+
     async def get_all_relationships(self) -> List[Dict[str, Any]]:
         """Retrieves all registered relationships from the MongoDB collection."""
         try:
@@ -185,12 +207,14 @@ class RelationshipService:
 
         return req_doc
 
-    async def get_alignment_request_status(self, user_id: str) -> Dict[str, Any]:
+    async def get_alignment_request_status(self, user_id: str, user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Gets active incoming and outgoing alignment requests for a user with comprehensive state cleanup."""
         from bson import ObjectId
+        import asyncio
 
         # 1. Check if user is already aligned
-        user = await self.collection.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            user = await self.collection.find_one({"_id": ObjectId(user_id)})
         if not user or user.get("is_aligned"):
             # If user is already aligned, clean up any lingering pending requests in the background
             await self.requests_collection.update_many(
@@ -204,71 +228,80 @@ class RelationshipService:
 
         now = datetime.now(timezone.utc)
 
-        # 2. Check all incoming pending requests (user is receiver)
-        incoming_cursor = self.requests_collection.find({
+        # 2 & 3. Concurrently fetch incoming and outgoing pending requests
+        incoming_task = self.requests_collection.find({
             "receiver_id": user_id,
             "status": "pending"
-        }).sort("created_at", -1)
-        raw_incoming = await incoming_cursor.to_list(length=50)
+        }).sort("created_at", -1).to_list(length=50)
+
+        outgoing_task = self.requests_collection.find_one({
+            "sender_id": user_id,
+            "status": "pending"
+        })
+
+        raw_incoming, outgoing = await asyncio.gather(incoming_task, outgoing_task)
+
+        # Batch lookup all related user records (senders of incoming requests + receiver of outgoing request)
+        related_ids = set()
+        for inc in (raw_incoming or []):
+            s_id = inc.get("sender_id")
+            if s_id and ObjectId.is_valid(s_id):
+                related_ids.add(ObjectId(s_id))
+        if outgoing:
+            r_id = outgoing.get("receiver_id")
+            if r_id and ObjectId.is_valid(r_id):
+                related_ids.add(ObjectId(r_id))
+
+        users_map = {}
+        if related_ids:
+            docs = await self.collection.find({"_id": {"$in": list(related_ids)}}).to_list(length=len(related_ids))
+            users_map = {str(d["_id"]): d for d in docs}
 
         valid_incoming = []
         seen_senders = set()
-        for inc in raw_incoming:
+        stale_request_ids = []
+
+        for inc in (raw_incoming or []):
             inc["id"] = str(inc["_id"])
             inc["_id"] = str(inc["_id"])
             s_id = str(inc.get("sender_id"))
 
-            # If duplicate request from same sender, cancel the older duplicate
             if s_id in seen_senders:
-                await self.requests_collection.update_one(
-                    {"_id": ObjectId(inc["id"])},
-                    {"$set": {"status": "cancelled", "updated_at": now}}
-                )
+                stale_request_ids.append(ObjectId(inc["id"]))
                 continue
 
-            try:
-                s = await self.collection.find_one({"_id": ObjectId(inc["sender_id"])})
-                if s:
-                    if s.get("is_aligned"):
-                        # Sender already aligned with someone else, auto-cancel this stale request
-                        await self.requests_collection.update_one(
-                            {"_id": ObjectId(inc["id"])},
-                            {"$set": {"status": "cancelled", "updated_at": now}}
-                        )
-                        continue
-                    inc["sender_name"] = s.get("name", inc.get("sender_name"))
-                    inc["sender_profile_photo"] = s.get("profile_photo_url")
-                    inc["sender_city"] = s.get("city_name")
-                    if "created_at" in inc and hasattr(inc["created_at"], "isoformat"):
-                        inc["created_at"] = inc["created_at"].isoformat()
-                    seen_senders.add(s_id)
-                    valid_incoming.append(inc)
-            except Exception:
-                pass
+            s = users_map.get(s_id)
+            if s:
+                if s.get("is_aligned"):
+                    stale_request_ids.append(ObjectId(inc["id"]))
+                    continue
+                inc["sender_name"] = s.get("name", inc.get("sender_name"))
+                inc["sender_profile_photo"] = s.get("profile_photo_url")
+                inc["sender_city"] = s.get("city_name")
+                if "created_at" in inc and hasattr(inc["created_at"], "isoformat"):
+                    inc["created_at"] = inc["created_at"].isoformat()
+                seen_senders.add(s_id)
+                valid_incoming.append(inc)
 
-        # 3. Check outgoing pending request (user is sender)
-        outgoing = await self.requests_collection.find_one({
-            "sender_id": user_id,
-            "status": "pending"
-        })
         if outgoing:
             outgoing["id"] = str(outgoing["_id"])
             outgoing["_id"] = str(outgoing["_id"])
-            try:
-                r = await self.collection.find_one({"_id": ObjectId(outgoing["receiver_id"])})
-                if r:
-                    if r.get("is_aligned"):
-                        # Target partner already aligned with someone else, auto-cancel
-                        await self.requests_collection.update_one(
-                            {"_id": ObjectId(outgoing["id"])},
-                            {"$set": {"status": "cancelled", "updated_at": now}}
-                        )
-                        outgoing = None
-                    else:
-                        outgoing["receiver_name"] = r.get("name", outgoing.get("receiver_name"))
-                        outgoing["receiver_profile_photo"] = r.get("profile_photo_url")
-            except Exception:
-                pass
+            r_id = str(outgoing.get("receiver_id"))
+            r = users_map.get(r_id)
+            if r:
+                if r.get("is_aligned"):
+                    stale_request_ids.append(ObjectId(outgoing["id"]))
+                    outgoing = None
+                else:
+                    outgoing["receiver_name"] = r.get("name", outgoing.get("receiver_name"))
+                    outgoing["receiver_profile_photo"] = r.get("profile_photo_url")
+
+        # Cleanup any stale requests in one go
+        if stale_request_ids:
+            await self.requests_collection.update_many(
+                {"_id": {"$in": stale_request_ids}},
+                {"$set": {"status": "cancelled", "updated_at": now}}
+            )
 
         return {
             "is_aligned": False,
@@ -505,10 +538,11 @@ class RelationshipService:
 
         return {"status": "cancelled"}
 
-    async def regenerate_aligned_key(self, user_id: str) -> str:
+    async def regenerate_aligned_key(self, user_id: str, user: Optional[Dict[str, Any]] = None) -> str:
         """Generates a new unique Aligned secret key for the unaligned user."""
         from bson import ObjectId
-        user = await self.collection.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            user = await self.collection.find_one({"_id": ObjectId(user_id)})
         if not user:
             raise ValueError("User not found.")
         if user.get("is_aligned") or user.get("partner"):
@@ -632,12 +666,14 @@ class RelationshipService:
             
         return updated_initiator
 
-    async def update_relationship_profile(self, user_id: str, relationship: RelationshipCreate) -> Dict[str, Any]:
+    async def update_relationship_profile(self, user_id: str, relationship: RelationshipCreate, user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Updates an existing user's profile with relationship details."""
         from bson import ObjectId
+        from pymongo import ReturnDocument
         
-        # Verify user exists
-        user = await self.collection.find_one({"_id": ObjectId(user_id)})
+        # Verify user exists or use provided user
+        if not user:
+            user = await self.collection.find_one({"_id": ObjectId(user_id)})
         if not user:
             raise ValueError("User not found.")
             
@@ -653,12 +689,11 @@ class RelationshipService:
         if not user.get("secret_key") and not user.get("is_aligned"):
             updates["secret_key"] = await self.generate_unique_secret_key()
 
-        await self.collection.update_one(
+        updated = await self.collection.find_one_and_update(
             {"_id": ObjectId(user_id)},
-            {"$set": updates}
+            {"$set": updates},
+            return_document=ReturnDocument.AFTER
         )
-        
-        updated = await self.collection.find_one({"_id": ObjectId(user_id)})
         if updated and "_id" in updated:
             updated["id"] = str(updated["_id"])
             updated["_id"] = str(updated["_id"])
@@ -894,10 +929,11 @@ class RelationshipService:
         )
         return True
 
-    async def get_relationship_profile(self, user_id: str) -> Dict[str, Any]:
+    async def get_relationship_profile(self, user_id: str, user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Retrieves a user's relationship profile."""
         from bson import ObjectId
-        user = await self.collection.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            user = await self.collection.find_one({"_id": ObjectId(user_id)})
         if not user:
             raise ValueError("User not found.")
             
@@ -907,10 +943,14 @@ class RelationshipService:
             
         return user
 
-    async def get_partner_details(self, user_id: str) -> Dict[str, Any]:
+    async def get_partner_details(self, user_id: str, user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Retrieves the details of the aligned partner."""
         from bson import ObjectId
-        user = await self.collection.find_one({"_id": ObjectId(user_id)})
+        from datetime import timezone
+        import asyncio
+        
+        if not user:
+            user = await self.collection.find_one({"_id": ObjectId(user_id)})
         if not user:
             raise ValueError("User not found.")
             
@@ -922,7 +962,16 @@ class RelationshipService:
             raise ValueError("Partner information not found.")
             
         partner_id = partner_info["user_id"]
-        partner = await self.collection.find_one({"_id": ObjectId(partner_id)})
+        
+        # Concurrently fetch partner record, latest check-in, latest thread message, and latest ritual completion
+        partner_task = self.collection.find_one({"_id": ObjectId(partner_id)})
+        checkin_task = self.db["check_ins"].find_one({"user_id": partner_id}, sort=[("created_at", -1)])
+        msg_task = self.db["thread_messages"].find_one({"creator_id": partner_id}, sort=[("created_at", -1)])
+        ritual_task = self.db["ritual_completions"].find_one({"user_id": partner_id}, sort=[("created_at", -1)])
+        
+        partner, latest_checkin, latest_msg, latest_ritual = await asyncio.gather(
+            partner_task, checkin_task, msg_task, ritual_task
+        )
         
         if not partner:
             raise ValueError("Partner record not found.")
@@ -935,18 +984,12 @@ class RelationshipService:
         if partner.get("last_active_at"):
             timestamps.append(partner["last_active_at"])
             
-        # Check check_ins
-        latest_checkin = await self.db["check_ins"].find_one({"user_id": partner_id}, sort=[("created_at", -1)])
         if latest_checkin and latest_checkin.get("created_at"):
             timestamps.append(latest_checkin["created_at"])
             
-        # Check thread_messages
-        latest_msg = await self.db["thread_messages"].find_one({"creator_id": partner_id}, sort=[("created_at", -1)])
         if latest_msg and latest_msg.get("created_at"):
             timestamps.append(latest_msg["created_at"])
             
-        # Check ritual_completions
-        latest_ritual = await self.db["ritual_completions"].find_one({"user_id": partner_id}, sort=[("created_at", -1)])
         if latest_ritual:
             if latest_ritual.get("created_at"):
                 timestamps.append(latest_ritual["created_at"])
@@ -973,15 +1016,19 @@ class RelationshipService:
     async def update_user(self, user_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
         """Updates specific fields of the user profile."""
         from bson import ObjectId
-        await self.collection.update_one(
+        from pymongo import ReturnDocument
+        
+        updated = await self.collection.find_one_and_update(
             {"_id": ObjectId(user_id)},
-            {"$set": updates}
+            {"$set": updates},
+            return_document=ReturnDocument.AFTER
         )
+        if not updated:
+            raise ValueError("User not found.")
         
         # If gender was updated, sync to partner's record
         if "gender" in updates:
-            user = await self.collection.find_one({"_id": ObjectId(user_id)})
-            partner = user.get("partner") if user else None
+            partner = updated.get("partner")
             partner_id = partner.get("user_id") if partner else None
             if partner_id:
                 await self.collection.update_one(
@@ -989,8 +1036,7 @@ class RelationshipService:
                     {"$set": {"partner.gender": updates["gender"]}}
                 )
         
-        updated = await self.collection.find_one({"_id": ObjectId(user_id)})
-        if updated and "_id" in updated:
+        if "_id" in updated:
             updated["id"] = str(updated["_id"])
             updated["_id"] = str(updated["_id"])
         return updated
@@ -1031,13 +1077,14 @@ class RelationshipService:
         
         return await self._notify_profile_photo_update(user_id)
 
-    async def get_profile_photos(self, user_id: str) -> Dict[str, Any]:
+    async def get_profile_photos(self, user_id: str, user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Retrieves all profile photos for the user."""
         from bson import ObjectId
         import uuid
         from datetime import datetime, timezone
         
-        user = await self.collection.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            user = await self.collection.find_one({"_id": ObjectId(user_id)})
         if not user:
             raise ValueError("User not found.")
             
@@ -1194,15 +1241,17 @@ class RelationshipService:
             raise ValueError("User not found.")
         return user.get("profile_photo_url")
 
-    async def get_sync_summary(self, user_id: str, timezone_str: str = "UTC") -> Dict[str, Any]:
+    async def get_sync_summary(self, user_id: str, timezone_str: str = "UTC", user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Calculates the combined Sync score for the user and their Aligned partner.
         Enforces a max 1-count-per-day per person cap for Rituals, Check-ins, Appreciations, and Threads.
         """
         from bson import ObjectId
         from datetime import datetime, timezone, timedelta
         from typing import Optional
+        import asyncio
         
-        user = await self.collection.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            user = await self.collection.find_one({"_id": ObjectId(user_id)})
         if not user:
             raise ValueError("User not found.")
             
@@ -1237,9 +1286,9 @@ class RelationshipService:
         
         async def count_unique_active_days(collection, query: dict, date_field: str = "created_at") -> int:
             """Counts unique calendar days (in user's timezone) where the query matched (max 1 per day)."""
-            cursor = collection.find(query, {date_field: 1, "completed_date": 1})
+            docs = await collection.find(query, {date_field: 1, "completed_date": 1}).to_list(length=200)
             unique_days = set()
-            async for doc in cursor:
+            for doc in docs:
                 dt = doc.get(date_field)
                 if isinstance(dt, datetime):
                     if dt.tzinfo is None:
@@ -1253,13 +1302,19 @@ class RelationshipService:
         async def count_unique_appreciation_days(uid: Optional[str]) -> int:
             if not uid:
                 return 0
-            unique_days = set()
-            # 1. Check ritual_completions (ritual_type="appreciation")
-            cur1 = rituals_coll.find(
+            # Fetch both ritual_completions and thread_messages concurrently
+            t1 = rituals_coll.find(
                 {"user_id": uid, "ritual_type": "appreciation", "created_at": {"$gte": seven_days_ago}},
                 {"created_at": 1, "completed_date": 1}
-            )
-            async for doc in cur1:
+            ).to_list(length=100)
+            t2 = messages_coll.find(
+                {"creator_id": uid, "category": {"$in": ["Appreciation", "appreciation"]}, "created_at": {"$gte": seven_days_ago}},
+                {"created_at": 1}
+            ).to_list(length=100)
+            res1, res2 = await asyncio.gather(t1, t2)
+
+            unique_days = set()
+            for doc in res1:
                 dt = doc.get("created_at")
                 if isinstance(dt, datetime):
                     if dt.tzinfo is None:
@@ -1267,12 +1322,7 @@ class RelationshipService:
                     unique_days.add(dt.astimezone(tz).strftime("%Y-%m-%d"))
                 elif doc.get("completed_date"):
                     unique_days.add(doc["completed_date"])
-            # 2. Check thread_messages (category="Appreciation")
-            cur2 = messages_coll.find(
-                {"creator_id": uid, "category": {"$in": ["Appreciation", "appreciation"]}, "created_at": {"$gte": seven_days_ago}},
-                {"created_at": 1}
-            )
-            async for doc in cur2:
+            for doc in res2:
                 dt = doc.get("created_at")
                 if isinstance(dt, datetime):
                     if dt.tzinfo is None:
@@ -1300,18 +1350,6 @@ class RelationshipService:
             perc = min(int((volume_score * sync_multiplier) * 100), 100)
             return perc, total, max_total
 
-        # 1. Rituals (max 1 per day per user)
-        user_rituals = await count_unique_active_days(
-            rituals_coll, 
-            {"user_id": user_id, "created_at": {"$gte": seven_days_ago}}
-        )
-        partner_rituals = await count_unique_active_days(
-            rituals_coll, 
-            {"user_id": partner_id, "created_at": {"$gte": seven_days_ago}}
-        ) if partner_id else 0
-        r_perc, r_count, r_target = calculate_metric_sync(user_rituals, partner_rituals)
-        
-        # 2. Check-ins (max 1 per day per user)
         def normalize_checkin_date(d_str: str) -> Optional[str]:
             for fmt in ("%m.%d.%Y", "%Y-%m-%d", "%m/%d/%Y"):
                 try:
@@ -1320,30 +1358,62 @@ class RelationshipService:
                     pass
             return d_str
 
-        user_checkin_raw = await checkins_coll.distinct("date", {"user_id": user_id, "date": {"$in": all_dates_to_check}})
-        user_checkins = len(set(normalize_checkin_date(d) for d in user_checkin_raw if d))
-        
-        partner_checkins = 0
-        if partner_id:
-            partner_checkin_raw = await checkins_coll.distinct("date", {"user_id": partner_id, "date": {"$in": all_dates_to_check}})
-            partner_checkins = len(set(normalize_checkin_date(d) for d in partner_checkin_raw if d))
-            
-        c_perc, c_count, c_target = calculate_metric_sync(user_checkins, partner_checkins)
-        
-        # 3. Appreciations (max 1 per day per user)
-        user_appr = await count_unique_appreciation_days(user_id)
-        partner_appr = await count_unique_appreciation_days(partner_id) if partner_id else 0
-        a_perc, a_count, a_target = calculate_metric_sync(user_appr, partner_appr)
-        
-        # 4. Threads (max 1 per day per user)
-        user_threads = await count_unique_active_days(
+        async def empty_int() -> int:
+            return 0
+
+        async def empty_list() -> list:
+            return []
+
+        # Run all metrics for user and partner concurrently in parallel
+        user_rituals_task = count_unique_active_days(
+            rituals_coll, 
+            {"user_id": user_id, "created_at": {"$gte": seven_days_ago}}
+        )
+        partner_rituals_task = count_unique_active_days(
+            rituals_coll, 
+            {"user_id": partner_id, "created_at": {"$gte": seven_days_ago}}
+        ) if partner_id else empty_int()
+
+        user_checkins_task = checkins_coll.distinct("date", {"user_id": user_id, "date": {"$in": all_dates_to_check}})
+        partner_checkins_task = checkins_coll.distinct("date", {"user_id": partner_id, "date": {"$in": all_dates_to_check}}) if partner_id else empty_list()
+
+        user_appr_task = count_unique_appreciation_days(user_id)
+        partner_appr_task = count_unique_appreciation_days(partner_id) if partner_id else empty_int()
+
+        user_threads_task = count_unique_active_days(
             messages_coll, 
             {"creator_id": user_id, "created_at": {"$gte": seven_days_ago}}
         )
-        partner_threads = await count_unique_active_days(
+        partner_threads_task = count_unique_active_days(
             messages_coll, 
             {"creator_id": partner_id, "created_at": {"$gte": seven_days_ago}}
-        ) if partner_id else 0
+        ) if partner_id else empty_int()
+
+        (
+            user_rituals,
+            partner_rituals,
+            user_checkin_raw,
+            partner_checkin_raw,
+            user_appr,
+            partner_appr,
+            user_threads,
+            partner_threads
+        ) = await asyncio.gather(
+            user_rituals_task,
+            partner_rituals_task,
+            user_checkins_task,
+            partner_checkins_task,
+            user_appr_task,
+            partner_appr_task,
+            user_threads_task,
+            partner_threads_task
+        )
+
+        r_perc, r_count, r_target = calculate_metric_sync(user_rituals, partner_rituals)
+        user_checkins = len(set(normalize_checkin_date(d) for d in (user_checkin_raw or []) if d))
+        partner_checkins = len(set(normalize_checkin_date(d) for d in (partner_checkin_raw or []) if d))
+        c_perc, c_count, c_target = calculate_metric_sync(user_checkins, partner_checkins)
+        a_perc, a_count, a_target = calculate_metric_sync(user_appr, partner_appr)
         t_perc, t_count, t_target = calculate_metric_sync(user_threads, partner_threads)
         
         # Weighted overall score
