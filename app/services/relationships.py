@@ -16,6 +16,7 @@ class RelationshipService:
         self.client = get_client()
         self.db = get_db()
         self.collection = self.db["users"]
+        self.requests_collection = self.db["alignment_requests"]
 
     async def get_all_relationships(self) -> List[Dict[str, Any]]:
         """Retrieves all registered relationships from the MongoDB collection."""
@@ -66,6 +67,460 @@ class RelationshipService:
             
         return new_data
 
+    async def create_alignment_request(self, user_id: str, partner_secret_key: str) -> Dict[str, Any]:
+        """Creates a pending alignment connection request to the partner identified by secret key."""
+        from bson import ObjectId
+        
+        # 1. Fetch initiator
+        initiator = await self.collection.find_one({"_id": ObjectId(user_id)})
+        if not initiator:
+            raise ValueError("User not found.")
+            
+        if initiator.get("is_aligned"):
+            raise ValueError("You are already connected to a partner.")
+
+        # 2. Fetch partner by secret key
+        clean_key = partner_secret_key.strip().upper()
+        partner = await self.collection.find_one({"secret_key": clean_key})
+        if not partner:
+            raise ValueError("Partner with specified secret key not found.")
+            
+        if partner.get("is_aligned"):
+            raise ValueError("The partner is already connected to another user.")
+            
+        if partner.get("secret_key_enabled") is False:
+            raise ValueError("Partner's secret key is currently disabled.")
+            
+        if str(initiator["_id"]) == str(partner["_id"]):
+            raise ValueError("Cannot connect to your own secret key.")
+
+        # 3. Check existing active pending requests
+        existing_to_partner = await self.requests_collection.find_one({
+            "sender_id": user_id,
+            "receiver_id": str(partner["_id"]),
+            "status": "pending"
+        })
+        if existing_to_partner:
+            existing_to_partner["id"] = str(existing_to_partner["_id"])
+            existing_to_partner["_id"] = str(existing_to_partner["_id"])
+            return existing_to_partner
+
+        existing_active = await self.requests_collection.find_one({
+            "$or": [
+                {"sender_id": user_id, "status": "pending"},
+                {"receiver_id": user_id, "status": "pending"},
+                {"sender_id": str(partner["_id"]), "status": "pending"},
+                {"receiver_id": str(partner["_id"]), "status": "pending"},
+            ]
+        })
+        
+        if existing_active:
+            if existing_active.get("sender_id") == user_id and existing_active.get("receiver_id") == str(partner["_id"]):
+                existing_active["id"] = str(existing_active["_id"])
+                existing_active["_id"] = str(existing_active["_id"])
+                return existing_active
+            elif existing_active.get("sender_id") == str(partner["_id"]) and existing_active.get("receiver_id") == user_id:
+                # Partner had already sent a request to this user! Auto-accept mutually!
+                return await self.respond_alignment_request(user_id=user_id, request_id=str(existing_active["_id"]), accept=True)
+            elif existing_active.get("sender_id") == user_id:
+                # Cancel previous outgoing request to other user and create new
+                await self.requests_collection.update_many(
+                    {"sender_id": user_id, "status": "pending"},
+                    {"$set": {"status": "cancelled", "updated_at": datetime.now(timezone.utc)}}
+                )
+
+        # 4. Create new request doc
+        now = datetime.now(timezone.utc)
+        req_doc = {
+            "sender_id": user_id,
+            "sender_name": initiator.get("name", "Partner"),
+            "sender_city": initiator.get("city_name", ""),
+            "sender_profile_photo": initiator.get("profile_photo_url"),
+            "receiver_id": str(partner["_id"]),
+            "receiver_name": partner.get("name", "Partner"),
+            "status": "pending",
+            "created_at": now,
+            "updated_at": now
+        }
+        res = await self.requests_collection.insert_one(req_doc)
+        req_doc["_id"] = str(res.inserted_id)
+        req_doc["id"] = str(res.inserted_id)
+
+        # 5. Send notification to partner
+        try:
+            await notification_service.create_notification(
+                NotificationCreate(
+                    recipient_id=str(partner["_id"]),
+                    type=NotificationType.RELATIONSHIP_REQUEST,
+                    title="Alignment Request",
+                    message=f"{initiator.get('name', 'Someone')} sent you an alignment request to connect.",
+                    metadata={"request_id": req_doc["id"], "sender_name": initiator.get("name")}
+                )
+            )
+        except Exception as e:
+            print("Failed to send alignment request push notification:", e)
+
+        # 6. Broadcast real-time WebSocket events
+        try:
+            await ws_manager.broadcast_to_user(
+                user_id=str(partner["_id"]),
+                message={
+                    "type": "ALIGNMENT_REQUEST_RECEIVED",
+                    "request_id": req_doc["id"],
+                    "sender_name": initiator.get("name", "Partner"),
+                    "sender_city": initiator.get("city_name", ""),
+                    "sender_profile_photo": initiator.get("profile_photo_url")
+                }
+            )
+            await ws_manager.broadcast_to_user(
+                user_id=user_id,
+                message={
+                    "type": "ALIGNMENT_REQUEST_SENT",
+                    "request_id": req_doc["id"],
+                    "receiver_name": partner.get("name", "Partner")
+                }
+            )
+        except Exception as e:
+            print("Failed to broadcast ws event:", e)
+
+        return req_doc
+
+    async def get_alignment_request_status(self, user_id: str) -> Dict[str, Any]:
+        """Gets active incoming and outgoing alignment requests for a user with comprehensive state cleanup."""
+        from bson import ObjectId
+
+        # 1. Check if user is already aligned
+        user = await self.collection.find_one({"_id": ObjectId(user_id)})
+        if not user or user.get("is_aligned"):
+            # If user is already aligned, clean up any lingering pending requests in the background
+            await self.requests_collection.update_many(
+                {
+                    "status": "pending",
+                    "$or": [{"sender_id": user_id}, {"receiver_id": user_id}]
+                },
+                {"$set": {"status": "cancelled", "updated_at": datetime.now(timezone.utc)}}
+            )
+            return {"is_aligned": True, "incoming": None, "incoming_list": [], "outgoing": None}
+
+        now = datetime.now(timezone.utc)
+
+        # 2. Check all incoming pending requests (user is receiver)
+        incoming_cursor = self.requests_collection.find({
+            "receiver_id": user_id,
+            "status": "pending"
+        }).sort("created_at", -1)
+        raw_incoming = await incoming_cursor.to_list(length=50)
+
+        valid_incoming = []
+        seen_senders = set()
+        for inc in raw_incoming:
+            inc["id"] = str(inc["_id"])
+            inc["_id"] = str(inc["_id"])
+            s_id = str(inc.get("sender_id"))
+
+            # If duplicate request from same sender, cancel the older duplicate
+            if s_id in seen_senders:
+                await self.requests_collection.update_one(
+                    {"_id": ObjectId(inc["id"])},
+                    {"$set": {"status": "cancelled", "updated_at": now}}
+                )
+                continue
+
+            try:
+                s = await self.collection.find_one({"_id": ObjectId(inc["sender_id"])})
+                if s:
+                    if s.get("is_aligned"):
+                        # Sender already aligned with someone else, auto-cancel this stale request
+                        await self.requests_collection.update_one(
+                            {"_id": ObjectId(inc["id"])},
+                            {"$set": {"status": "cancelled", "updated_at": now}}
+                        )
+                        continue
+                    inc["sender_name"] = s.get("name", inc.get("sender_name"))
+                    inc["sender_profile_photo"] = s.get("profile_photo_url")
+                    inc["sender_city"] = s.get("city_name")
+                    if "created_at" in inc and hasattr(inc["created_at"], "isoformat"):
+                        inc["created_at"] = inc["created_at"].isoformat()
+                    seen_senders.add(s_id)
+                    valid_incoming.append(inc)
+            except Exception:
+                pass
+
+        # 3. Check outgoing pending request (user is sender)
+        outgoing = await self.requests_collection.find_one({
+            "sender_id": user_id,
+            "status": "pending"
+        })
+        if outgoing:
+            outgoing["id"] = str(outgoing["_id"])
+            outgoing["_id"] = str(outgoing["_id"])
+            try:
+                r = await self.collection.find_one({"_id": ObjectId(outgoing["receiver_id"])})
+                if r:
+                    if r.get("is_aligned"):
+                        # Target partner already aligned with someone else, auto-cancel
+                        await self.requests_collection.update_one(
+                            {"_id": ObjectId(outgoing["id"])},
+                            {"$set": {"status": "cancelled", "updated_at": now}}
+                        )
+                        outgoing = None
+                    else:
+                        outgoing["receiver_name"] = r.get("name", outgoing.get("receiver_name"))
+                        outgoing["receiver_profile_photo"] = r.get("profile_photo_url")
+            except Exception:
+                pass
+
+        return {
+            "is_aligned": False,
+            "incoming": valid_incoming[0] if valid_incoming else None,
+            "incoming_list": valid_incoming,
+            "outgoing": outgoing
+        }
+
+    async def respond_alignment_request(self, user_id: str, request_id: str, accept: bool) -> Dict[str, Any]:
+        """Approves or declines an incoming alignment request with strict concurrency and multi-request cleanup."""
+        from bson import ObjectId
+        
+        req = await self.requests_collection.find_one({"_id": ObjectId(request_id)})
+        if not req:
+            raise ValueError("Alignment request not found.")
+            
+        if req.get("receiver_id") != user_id:
+            raise ValueError("You are not authorized to respond to this request.")
+            
+        if req.get("status") != "pending":
+            raise ValueError(f"This request is no longer active (status: {req.get('status')}).")
+
+        now = datetime.now(timezone.utc)
+        sender_id = req["sender_id"]
+
+        if accept:
+            # 1. Fetch initiator and receiver
+            sender = await self.collection.find_one({"_id": ObjectId(sender_id)})
+            receiver = await self.collection.find_one({"_id": ObjectId(user_id)})
+
+            if not sender or not receiver:
+                raise ValueError("User accounts not found.")
+                
+            if sender.get("is_aligned"):
+                # Mark request cancelled
+                await self.requests_collection.update_one(
+                    {"_id": ObjectId(request_id)},
+                    {"$set": {"status": "cancelled", "updated_at": now}}
+                )
+                raise ValueError(f"{sender.get('name', 'This user')} is already aligned with another partner.")
+                
+            if receiver.get("is_aligned"):
+                await self.requests_collection.update_many(
+                    {"receiver_id": user_id, "status": "pending"},
+                    {"$set": {"status": "cancelled", "updated_at": now}}
+                )
+                raise ValueError("You are already connected to a partner.")
+
+            # 2. Mutually bond both users
+            today_str = now.strftime("%m.%d.%Y")
+
+            await self.collection.update_one(
+                {"_id": sender["_id"]},
+                {
+                    "$set": {
+                        "is_aligned": True,
+                        "aligned_at": now,
+                        "relationship_start_date": today_str,
+                        "secret_key": None,
+                        "partner": {
+                            "user_id": str(receiver["_id"]),
+                            "name": receiver["name"],
+                            "city_name": receiver.get("city_name", ""),
+                            "relationship_start_date": today_str,
+                            "is_long_distance": receiver.get("is_long_distance", False),
+                            "gender": receiver.get("gender", "Not to say"),
+                            "profile_photo_url": receiver.get("profile_photo_url")
+                        }
+                    }
+                }
+            )
+
+            await self.collection.update_one(
+                {"_id": receiver["_id"]},
+                {
+                    "$set": {
+                        "is_aligned": True,
+                        "aligned_at": now,
+                        "relationship_start_date": today_str,
+                        "secret_key": None,
+                        "partner": {
+                            "user_id": str(sender["_id"]),
+                            "name": sender["name"],
+                            "city_name": sender.get("city_name", ""),
+                            "relationship_start_date": today_str,
+                            "is_long_distance": sender.get("is_long_distance", False),
+                            "gender": sender.get("gender", "Not to say"),
+                            "profile_photo_url": sender.get("profile_photo_url")
+                        }
+                    }
+                }
+            )
+
+            # 3. Mark this request as accepted
+            await self.requests_collection.update_one(
+                {"_id": ObjectId(request_id)},
+                {"$set": {"status": "accepted", "updated_at": now}}
+            )
+
+            # 4. Find all OTHER pending requests involving either user to notify other users and hide all requests!
+            other_requests_cursor = self.requests_collection.find({
+                "_id": {"$ne": ObjectId(request_id)},
+                "status": "pending",
+                "$or": [
+                    {"sender_id": sender_id},
+                    {"receiver_id": sender_id},
+                    {"sender_id": user_id},
+                    {"receiver_id": user_id},
+                ]
+            })
+            other_requests = await other_requests_cursor.to_list(length=100)
+
+            # Cancel all other pending requests in database
+            await self.requests_collection.update_many(
+                {
+                    "_id": {"$ne": ObjectId(request_id)},
+                    "status": "pending",
+                    "$or": [
+                        {"sender_id": sender_id},
+                        {"receiver_id": sender_id},
+                        {"sender_id": user_id},
+                        {"receiver_id": user_id},
+                    ]
+                },
+                {"$set": {"status": "cancelled", "updated_at": now}}
+            )
+
+            # 5. Broadcast cancellation to any third parties who had sent or were waiting on requests
+            for other_req in other_requests:
+                other_req_id = str(other_req["_id"])
+                parties = [other_req.get("sender_id"), other_req.get("receiver_id")]
+                for p in parties:
+                    if p and p not in [sender_id, user_id]:
+                        try:
+                            await ws_manager.broadcast_to_user(
+                                user_id=p,
+                                message={"type": "ALIGNMENT_REQUEST_CANCELLED", "request_id": other_req_id}
+                            )
+                        except Exception:
+                            pass
+
+            # 6. Notify sender with high-priority push notification
+            try:
+                await notification_service.create_notification(
+                    NotificationCreate(
+                        recipient_id=sender_id,
+                        type=NotificationType.RELATIONSHIP_ACCEPT,
+                        title="Alignment Connected!",
+                        message=f"{receiver.get('name', 'Your partner')} approved your alignment request. You are now bonded!",
+                        metadata={"partner_id": user_id, "partner_name": receiver.get("name")}
+                    )
+                )
+            except Exception as e:
+                print("Error sending accept notification:", e)
+
+            # 7. Broadcast real-time WebSocket events to BOTH users
+            try:
+                await ws_manager.broadcast_to_user(
+                    user_id=sender_id,
+                    message={"type": "ALIGNMENT_BONDED", "partner_name": receiver.get("name", "Partner")}
+                )
+                await ws_manager.broadcast_to_user(
+                    user_id=user_id,
+                    message={"type": "ALIGNMENT_BONDED", "partner_name": sender.get("name", "Partner")}
+                )
+            except Exception as e:
+                print("Error broadcasting bonded ws event:", e)
+
+            return {
+                "status": "accepted",
+                "partner_name": sender.get("name", "Partner"),
+                "partner_id": sender_id
+            }
+
+        else:
+            # Reject request
+            await self.requests_collection.update_one(
+                {"_id": ObjectId(request_id)},
+                {"$set": {"status": "rejected", "updated_at": now}}
+            )
+
+            # Send push notification to sender
+            try:
+                receiver = await self.collection.find_one({"_id": ObjectId(user_id)})
+                receiver_name = receiver.get("name", "Your partner") if receiver else "Your partner"
+                await notification_service.create_notification(
+                    NotificationCreate(
+                        recipient_id=sender_id,
+                        type=NotificationType.RELATIONSHIP_REQUEST,
+                        title="Alignment Request Declined",
+                        message=f"{receiver_name} declined your alignment request.",
+                        metadata={"request_id": request_id, "partner_id": user_id, "partner_name": receiver_name}
+                    )
+                )
+            except Exception as notif_err:
+                print("Failed to send alignment decline notification:", notif_err)
+
+            # Broadcast WebSocket event to sender
+            try:
+                await ws_manager.broadcast_to_user(
+                    user_id=sender_id,
+                    message={"type": "ALIGNMENT_REJECTED", "request_id": request_id}
+                )
+            except Exception as e:
+                print("Error broadcasting reject ws event:", e)
+
+            return {"status": "rejected"}
+
+    async def cancel_alignment_request(self, user_id: str, request_id: str) -> Dict[str, Any]:
+        """Cancels an outgoing alignment request."""
+        from bson import ObjectId
+        
+        req = await self.requests_collection.find_one({"_id": ObjectId(request_id)})
+        if not req:
+            raise ValueError("Alignment request not found.")
+            
+        if req.get("sender_id") != user_id:
+            raise ValueError("You are not authorized to cancel this request.")
+            
+        now = datetime.now(timezone.utc)
+        await self.requests_collection.update_one(
+            {"_id": ObjectId(request_id)},
+            {"$set": {"status": "cancelled", "updated_at": now}}
+        )
+
+        # Broadcast WebSocket event to receiver
+        try:
+            await ws_manager.broadcast_to_user(
+                user_id=req["receiver_id"],
+                message={"type": "ALIGNMENT_REQUEST_CANCELLED", "request_id": request_id}
+            )
+        except Exception as e:
+            print("Error broadcasting cancel ws event:", e)
+
+        return {"status": "cancelled"}
+
+    async def regenerate_aligned_key(self, user_id: str) -> str:
+        """Generates a new unique Aligned secret key for the unaligned user."""
+        from bson import ObjectId
+        user = await self.collection.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            raise ValueError("User not found.")
+        if user.get("is_aligned") or user.get("partner"):
+            raise ValueError("Cannot regenerate key while actively aligned with a partner.")
+
+        new_key = await self.generate_unique_secret_key()
+        await self.collection.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"secret_key": new_key, "secret_key_enabled": True, "updated_at": datetime.now(timezone.utc)}}
+        )
+        return new_key
+
     async def align_users(self, user_id: str, partner_secret_key: str) -> Dict[str, Any]:
         """Connects the initiating user with another user using the partner's secret key."""
         from bson import ObjectId
@@ -91,19 +546,25 @@ class RelationshipService:
             raise ValueError("Cannot connect to your own secret key.")
             
         # 5. Connect initiator to partner
+        now = datetime.now(timezone.utc)
+        today_str = now.strftime("%m.%d.%Y")
+
         await self.collection.update_one(
             {"_id": initiator["_id"]},
             {
                 "$set": {
                     "is_aligned": True,
+                    "aligned_at": now,
+                    "relationship_start_date": today_str,
                     "secret_key": None, # Disable secret key
                     "partner": {
                         "user_id": str(partner["_id"]),
                         "name": partner["name"],
-                        "city_name": partner["city_name"],
-                        "relationship_start_date": partner["relationship_start_date"],
-                        "is_long_distance": partner["is_long_distance"],
-                        "gender": partner.get("gender", "Not to say")
+                        "city_name": partner.get("city_name", ""),
+                        "relationship_start_date": today_str,
+                        "is_long_distance": partner.get("is_long_distance", False),
+                        "gender": partner.get("gender", "Not to say"),
+                        "profile_photo_url": partner.get("profile_photo_url")
                     }
                 }
             }
@@ -115,14 +576,17 @@ class RelationshipService:
             {
                 "$set": {
                     "is_aligned": True,
+                    "aligned_at": now,
+                    "relationship_start_date": today_str,
                     "secret_key": None, # Disable secret key
                     "partner": {
                         "user_id": str(initiator["_id"]),
                         "name": initiator["name"],
-                        "city_name": initiator["city_name"],
-                        "relationship_start_date": initiator["relationship_start_date"],
-                        "is_long_distance": initiator["is_long_distance"],
-                        "gender": initiator.get("gender", "Not to say")
+                        "city_name": initiator.get("city_name", ""),
+                        "relationship_start_date": today_str,
+                        "is_long_distance": initiator.get("is_long_distance", False),
+                        "gender": initiator.get("gender", "Not to say"),
+                        "profile_photo_url": initiator.get("profile_photo_url")
                     }
                 }
             }
@@ -214,7 +678,16 @@ class RelationshipService:
             raise ValueError("User not found.")
             
         if not initiator.get("is_aligned"):
-            raise ValueError("You are not connected to anyone.")
+            # Idempotently return initiator if already not aligned
+            if not initiator.get("secret_key"):
+                secret_key = await self.generate_unique_secret_key()
+                await self.collection.update_one(
+                    {"_id": initiator["_id"]},
+                    {"$set": {"secret_key": secret_key, "is_aligned": False, "partner": None}}
+                )
+                initiator["secret_key"] = secret_key
+            initiator["id"] = str(initiator["_id"])
+            return initiator
             
         partner_id = initiator.get("partner", {}).get("user_id")
         
@@ -226,10 +699,9 @@ class RelationshipService:
             }
         }
         
-        # If secret_key doesn't exist (e.g. older user who had it deleted), generate a new one
-        if not initiator.get("secret_key"):
-            secret_key = await self.generate_unique_secret_key()
-            updates["$set"]["secret_key"] = secret_key
+        # Always generate a fresh secret key on break alignment for initiator
+        secret_key = await self.generate_unique_secret_key()
+        updates["$set"]["secret_key"] = secret_key
             
         await self.collection.update_one(
             {"_id": initiator["_id"]},
@@ -240,15 +712,14 @@ class RelationshipService:
         if partner_id:
             partner = await self.collection.find_one({"_id": ObjectId(partner_id)})
             if partner:
+                partner_secret = await self.generate_unique_secret_key()
                 partner_updates = {
                     "$set": {
                         "is_aligned": False,
-                        "partner": None
+                        "partner": None,
+                        "secret_key": partner_secret
                     }
                 }
-                if not partner.get("secret_key"):
-                    partner_secret = await self.generate_unique_secret_key()
-                    partner_updates["$set"]["secret_key"] = partner_secret
                     
                 await self.collection.update_one(
                     {"_id": partner["_id"]},
@@ -270,8 +741,101 @@ class RelationshipService:
                     )
                 except Exception as e:
                     print(f"Failed to send break alignment notification: {e}")
+
+                # Broadcast WebSocket to partner
+                try:
+                    await ws_manager.broadcast_to_user(
+                        user_id=partner_id,
+                        message={"type": "ALIGNMENT_BROKEN"}
+                    )
+                except Exception:
+                    pass
+
+        # Broadcast WebSocket to initiator
+        try:
+            await ws_manager.broadcast_to_user(
+                user_id=user_id,
+                message={"type": "ALIGNMENT_BROKEN"}
+            )
+        except Exception:
+            pass
+
+        # 4. Clean up any lingering pending alignment requests in database
+        try:
+            await self.requests_collection.update_many(
+                {
+                    "status": "pending",
+                    "$or": [
+                        {"sender_id": user_id},
+                        {"receiver_id": user_id},
+                        {"sender_id": partner_id} if partner_id else {"sender_id": ""},
+                        {"receiver_id": partner_id} if partner_id else {"receiver_id": ""},
+                    ]
+                },
+                {"$set": {"status": "cancelled", "updated_at": datetime.now(timezone.utc)}}
+            )
+        except Exception:
+            pass
+
+        # 5. Clean Slate: Purge all past shared couple data between user_id and partner_id
+        if partner_id:
+            try:
+                pair_ids = [user_id, partner_id]
+                # Delete Thread Messages & Letters
+                await self.db["thread_messages"].delete_many({
+                    "$or": [
+                        {"creator_id": user_id, "partner_id": partner_id},
+                        {"creator_id": partner_id, "partner_id": user_id},
+                        {"creator_id": {"$in": pair_ids}}
+                    ]
+                })
+                # Delete Dates & Itineraries
+                await self.db["dates"].delete_many({
+                    "$or": [
+                        {"creator_id": user_id, "partner_id": partner_id},
+                        {"creator_id": partner_id, "partner_id": user_id},
+                        {"creator_id": {"$in": pair_ids}}
+                    ]
+                })
+                # Delete Map Places
+                await self.db["map_places"].delete_many({
+                    "$or": [
+                        {"creator_id": user_id, "partner_id": partner_id},
+                        {"creator_id": partner_id, "partner_id": user_id},
+                        {"creator_id": {"$in": pair_ids}}
+                    ]
+                })
+                # Delete US Milestones, Next Meets, and Proposals
+                await self.db["milestones"].delete_many({
+                    "$or": [
+                        {"user_id": user_id, "partner_id": partner_id},
+                        {"user_id": partner_id, "partner_id": user_id},
+                        {"user_id": {"$in": pair_ids}}
+                    ]
+                })
+                await self.db["next_meets"].delete_many({"user_id": {"$in": pair_ids}})
+                await self.db["proposals"].delete_many({
+                    "$or": [
+                        {"sender_id": user_id, "receiver_id": partner_id},
+                        {"sender_id": partner_id, "receiver_id": user_id},
+                        {"user_id": {"$in": pair_ids}}
+                    ]
+                })
+                # Delete Secrets
+                await self.db["secrets"].delete_many({
+                    "$or": [
+                        {"sender_id": user_id, "receiver_id": partner_id},
+                        {"sender_id": partner_id, "receiver_id": user_id},
+                        {"user_id": {"$in": pair_ids}}
+                    ]
+                })
+                # Delete Ritual Completions & Daily Check-ins
+                await self.db["ritual_completions"].delete_many({"user_id": {"$in": pair_ids}})
+                await self.db["check_ins"].delete_many({"user_id": {"$in": pair_ids}})
+            except Exception as purge_err:
+                print(f"Error purging couple data on break alignment: {purge_err}")
             
-        # 4. Fetch and return updated initiator data
+        # 5. Fetch and return updated initiator data
         updated_initiator = await self.collection.find_one({"_id": initiator["_id"]})
         if updated_initiator and "_id" in updated_initiator:
             updated_initiator["id"] = str(updated_initiator["_id"])
@@ -400,7 +964,10 @@ class RelationshipService:
             if max_ts.tzinfo is None:
                 max_ts = max_ts.replace(tzinfo=timezone.utc)
             partner["last_active_at"] = max_ts
-            
+
+        if not partner.get("location_city") and partner.get("timezone") and "/" in partner.get("timezone"):
+            partner["location_city"] = partner["timezone"].split("/")[-1].replace("_", " ")
+
         return partner
 
     async def update_user(self, user_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -428,13 +995,155 @@ class RelationshipService:
             updated["_id"] = str(updated["_id"])
         return updated
 
-    async def update_profile_photo(self, user_id: str, file_path: str) -> Dict[str, Any]:
-        """Updates the user's profile photo path."""
+    async def add_profile_photo(self, user_id: str, file_url: str) -> Dict[str, Any]:
+        """Adds a new profile photo to history and sets it as the active photo."""
         from bson import ObjectId
+        import uuid
+        from datetime import datetime, timezone
+        
+        photo_id = uuid.uuid4().hex
+        photo_entry = {
+            "id": photo_id,
+            "url": file_url,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        user = await self.collection.find_one({"_id": ObjectId(user_id)})
+        current_photos = user.get("profile_photos") or []
+        if not current_photos and user.get("profile_photo_url"):
+            current_photos = [{
+                "id": uuid.uuid4().hex,
+                "url": user["profile_photo_url"],
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }]
+            
+        new_photos = [photo_entry] + [p for p in current_photos if p.get("url") != file_url]
+        
         await self.collection.update_one(
             {"_id": ObjectId(user_id)},
-            {"$set": {"profile_photo_url": file_path}}
+            {
+                "$set": {
+                    "profile_photo_url": file_url,
+                    "profile_photos": new_photos
+                }
+            }
         )
+        
+        return await self._notify_profile_photo_update(user_id)
+
+    async def get_profile_photos(self, user_id: str) -> Dict[str, Any]:
+        """Retrieves all profile photos for the user."""
+        from bson import ObjectId
+        import uuid
+        from datetime import datetime, timezone
+        
+        user = await self.collection.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            raise ValueError("User not found.")
+            
+        photos = user.get("profile_photos") or []
+        active_url = user.get("profile_photo_url")
+        
+        # Auto-migrate legacy photo if photos list is empty
+        if not photos and active_url:
+            migrated_photo = {
+                "id": uuid.uuid4().hex,
+                "url": active_url,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            photos = [migrated_photo]
+            await self.collection.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": {"profile_photos": photos}}
+            )
+            
+        return {
+            "photos": photos,
+            "active_url": active_url
+        }
+
+    async def select_profile_photo(self, user_id: str, photo_id: str) -> Dict[str, Any]:
+        """Selects an existing photo from history as the active profile photo."""
+        from bson import ObjectId
+        user = await self.collection.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            raise ValueError("User not found.")
+            
+        photos = user.get("profile_photos") or []
+        selected = next((p for p in photos if str(p.get("id")) == str(photo_id) or p.get("url") == photo_id), None)
+        if not selected:
+            raise ValueError("Selected photo not found.")
+            
+        await self.collection.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"profile_photo_url": selected["url"]}}
+        )
+        
+        return await self._notify_profile_photo_update(user_id)
+
+    async def delete_profile_photo_item(self, user_id: str, photo_id: str) -> Dict[str, Any]:
+        """Deletes a specific photo item from the user's gallery history."""
+        from bson import ObjectId
+        from app.services.s3_utils import s3_service
+        import os
+        
+        user = await self.collection.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            raise ValueError("User not found.")
+            
+        photos = user.get("profile_photos") or []
+        target = next((p for p in photos if str(p.get("id")) == str(photo_id) or p.get("url") == photo_id), None)
+        
+        active_url = user.get("profile_photo_url")
+        if not target and active_url and (str(photo_id) == str(active_url) or str(photo_id) in str(active_url)):
+            target = {"id": photo_id, "url": active_url}
+            
+        if not target:
+            raise ValueError("Photo not found.")
+            
+        file_url = target.get("url")
+        if file_url:
+            if "amazonaws.com" in file_url:
+                await s3_service.delete_file(file_url)
+            elif os.path.exists(file_url.lstrip("/")):
+                os.remove(file_url.lstrip("/"))
+                
+        remaining_photos = [p for p in photos if str(p.get("id")) != str(photo_id) and p.get("url") != target.get("url")]
+        
+        # If the deleted photo was the active one, fallback to the first remaining photo or None
+        new_active_url = user.get("profile_photo_url")
+        if new_active_url == file_url or not remaining_photos:
+            new_active_url = remaining_photos[0]["url"] if remaining_photos else None
+            
+        await self.collection.update_one(
+            {"_id": ObjectId(user_id)},
+            {
+                "$set": {
+                    "profile_photo_url": new_active_url,
+                    "profile_photos": remaining_photos
+                }
+            }
+        )
+        
+        return await self._notify_profile_photo_update(user_id)
+
+    async def update_profile_photo(self, user_id: str, file_path: str) -> Dict[str, Any]:
+        """Updates the user's profile photo path."""
+        if file_path:
+            return await self.add_profile_photo(user_id, file_path)
+        else:
+            from bson import ObjectId
+            await self.collection.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": {"profile_photo_url": None}}
+            )
+            return await self._notify_profile_photo_update(user_id)
+
+    async def _notify_profile_photo_update(self, user_id: str) -> Dict[str, Any]:
+        """Internal helper to broadcast photo updates and return updated user object."""
+        from bson import ObjectId
+        from datetime import datetime, timezone
+        
         updated = await self.collection.find_one({"_id": ObjectId(user_id)})
         if updated and "_id" in updated:
             updated["id"] = str(updated["_id"])
@@ -486,9 +1195,12 @@ class RelationshipService:
         return user.get("profile_photo_url")
 
     async def get_sync_summary(self, user_id: str, timezone_str: str = "UTC") -> Dict[str, Any]:
-        """Calculates the combined Sync score for the user and their Aligned partner."""
+        """Calculates the combined Sync score for the user and their Aligned partner.
+        Enforces a max 1-count-per-day per person cap for Rituals, Check-ins, Appreciations, and Threads.
+        """
         from bson import ObjectId
         from datetime import datetime, timezone, timedelta
+        from typing import Optional
         
         user = await self.collection.find_one({"_id": ObjectId(user_id)})
         if not user:
@@ -517,12 +1229,59 @@ class RelationshipService:
         checkins_coll = self.db["check_ins"]
         messages_coll = self.db["thread_messages"]
         
-        # Dates for check_ins which uses string dates "MM.DD.YYYY"
+        # Dates for check_ins which uses string dates (supporting both "MM.DD.YYYY" and "YYYY-MM-DD")
         local_now = now.astimezone(tz)
-        dates_to_check = [(local_now - timedelta(days=i)).strftime("%m.%d.%Y") for i in range(7)]
+        dates_to_check_dot = [(local_now - timedelta(days=i)).strftime("%m.%d.%Y") for i in range(7)]
+        dates_to_check_dash = [(local_now - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+        all_dates_to_check = list(set(dates_to_check_dot + dates_to_check_dash))
         
+        async def count_unique_active_days(collection, query: dict, date_field: str = "created_at") -> int:
+            """Counts unique calendar days (in user's timezone) where the query matched (max 1 per day)."""
+            cursor = collection.find(query, {date_field: 1, "completed_date": 1})
+            unique_days = set()
+            async for doc in cursor:
+                dt = doc.get(date_field)
+                if isinstance(dt, datetime):
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    local_day = dt.astimezone(tz).strftime("%Y-%m-%d")
+                    unique_days.add(local_day)
+                elif doc.get("completed_date"):
+                    unique_days.add(doc["completed_date"])
+            return len(unique_days)
+
+        async def count_unique_appreciation_days(uid: Optional[str]) -> int:
+            if not uid:
+                return 0
+            unique_days = set()
+            # 1. Check ritual_completions (ritual_type="appreciation")
+            cur1 = rituals_coll.find(
+                {"user_id": uid, "ritual_type": "appreciation", "created_at": {"$gte": seven_days_ago}},
+                {"created_at": 1, "completed_date": 1}
+            )
+            async for doc in cur1:
+                dt = doc.get("created_at")
+                if isinstance(dt, datetime):
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    unique_days.add(dt.astimezone(tz).strftime("%Y-%m-%d"))
+                elif doc.get("completed_date"):
+                    unique_days.add(doc["completed_date"])
+            # 2. Check thread_messages (category="Appreciation")
+            cur2 = messages_coll.find(
+                {"creator_id": uid, "category": {"$in": ["Appreciation", "appreciation"]}, "created_at": {"$gte": seven_days_ago}},
+                {"created_at": 1}
+            )
+            async for doc in cur2:
+                dt = doc.get("created_at")
+                if isinstance(dt, datetime):
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    unique_days.add(dt.astimezone(tz).strftime("%Y-%m-%d"))
+            return len(unique_days)
+
         def calculate_metric_sync(user_count: int, partner_count: int, max_per_user: int = 7) -> tuple[int, int, int]:
-            # Cap the counts at the weekly max
+            # Cap the counts at the weekly max (7 per user)
             u = min(user_count, max_per_user)
             p = min(partner_count, max_per_user)
             
@@ -541,30 +1300,50 @@ class RelationshipService:
             perc = min(int((volume_score * sync_multiplier) * 100), 100)
             return perc, total, max_total
 
-        # 1. Rituals
-        user_rituals = await rituals_coll.count_documents({"user_id": user_id, "created_at": {"$gte": seven_days_ago}})
-        partner_rituals = await rituals_coll.count_documents({"user_id": partner_id, "created_at": {"$gte": seven_days_ago}}) if partner_id else 0
+        # 1. Rituals (max 1 per day per user)
+        user_rituals = await count_unique_active_days(
+            rituals_coll, 
+            {"user_id": user_id, "created_at": {"$gte": seven_days_ago}}
+        )
+        partner_rituals = await count_unique_active_days(
+            rituals_coll, 
+            {"user_id": partner_id, "created_at": {"$gte": seven_days_ago}}
+        ) if partner_id else 0
         r_perc, r_count, r_target = calculate_metric_sync(user_rituals, partner_rituals)
         
-        # 2. Check-ins
-        user_checkin_dates = await checkins_coll.distinct("date", {"user_id": user_id, "date": {"$in": dates_to_check}})
-        user_checkins = len(user_checkin_dates)
+        # 2. Check-ins (max 1 per day per user)
+        def normalize_checkin_date(d_str: str) -> Optional[str]:
+            for fmt in ("%m.%d.%Y", "%Y-%m-%d", "%m/%d/%Y"):
+                try:
+                    return datetime.strptime(d_str, fmt).strftime("%Y-%m-%d")
+                except ValueError:
+                    pass
+            return d_str
+
+        user_checkin_raw = await checkins_coll.distinct("date", {"user_id": user_id, "date": {"$in": all_dates_to_check}})
+        user_checkins = len(set(normalize_checkin_date(d) for d in user_checkin_raw if d))
         
         partner_checkins = 0
         if partner_id:
-            partner_checkin_dates = await checkins_coll.distinct("date", {"user_id": partner_id, "date": {"$in": dates_to_check}})
-            partner_checkins = len(partner_checkin_dates)
+            partner_checkin_raw = await checkins_coll.distinct("date", {"user_id": partner_id, "date": {"$in": all_dates_to_check}})
+            partner_checkins = len(set(normalize_checkin_date(d) for d in partner_checkin_raw if d))
             
         c_perc, c_count, c_target = calculate_metric_sync(user_checkins, partner_checkins)
         
-        # 3. Appreciations (ritual_type="appreciation")
-        user_appr = await rituals_coll.count_documents({"user_id": user_id, "ritual_type": "appreciation", "created_at": {"$gte": seven_days_ago}})
-        partner_appr = await rituals_coll.count_documents({"user_id": partner_id, "ritual_type": "appreciation", "created_at": {"$gte": seven_days_ago}}) if partner_id else 0
+        # 3. Appreciations (max 1 per day per user)
+        user_appr = await count_unique_appreciation_days(user_id)
+        partner_appr = await count_unique_appreciation_days(partner_id) if partner_id else 0
         a_perc, a_count, a_target = calculate_metric_sync(user_appr, partner_appr)
         
-        # 4. Threads (Any Thread message)
-        user_threads = await messages_coll.count_documents({"creator_id": user_id, "created_at": {"$gte": seven_days_ago}})
-        partner_threads = await messages_coll.count_documents({"creator_id": partner_id, "created_at": {"$gte": seven_days_ago}}) if partner_id else 0
+        # 4. Threads (max 1 per day per user)
+        user_threads = await count_unique_active_days(
+            messages_coll, 
+            {"creator_id": user_id, "created_at": {"$gte": seven_days_ago}}
+        )
+        partner_threads = await count_unique_active_days(
+            messages_coll, 
+            {"creator_id": partner_id, "created_at": {"$gte": seven_days_ago}}
+        ) if partner_id else 0
         t_perc, t_count, t_target = calculate_metric_sync(user_threads, partner_threads)
         
         # Weighted overall score

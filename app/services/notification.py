@@ -29,6 +29,10 @@ class NotificationService:
         except Exception as e:
             print(f"Index initialization note in notification: {e}")
 
+    async def create_notification(self, payload: NotificationCreate, sender_id: Optional[str] = None) -> Dict[str, Any]:
+        """Creates and dispatches an instant notification with WebSocket and Push delivery."""
+        return await self.schedule_notification(sender_id or payload.recipient_id, payload)
+
     async def schedule_notification(self, sender_id: str, payload: NotificationCreate) -> Dict[str, Any]:
         new_doc = payload.model_dump()
         new_doc["sender_id"] = sender_id

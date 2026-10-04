@@ -9,6 +9,7 @@ class UserUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, description="User's name")
     gender: Optional[str] = Field(None, description="Gender (Male, Female, Not to say)")
     profile_photo_url: Optional[str] = Field(None, description="URL of uploaded profile photo")
+    secret_key_enabled: Optional[bool] = Field(None, description="Whether the user's Aligned secret key is enabled")
 
     @model_validator(mode="after")
     def validate_gender_value(self) -> "UserUpdate":
@@ -73,6 +74,7 @@ class UserMeResponse(BaseModel):
     is_admin: bool = False
     partner: Optional[Dict[str, Any]] = None
     secret_key: Optional[str] = None
+    secret_key_enabled: bool = True
     profile_photo_url: Optional[str] = None
     last_active_at: Optional[datetime.datetime] = None
     location_city: Optional[str] = None

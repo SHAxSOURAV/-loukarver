@@ -87,11 +87,13 @@ class RelationshipResponseData(BaseModel):
     is_long_distance: bool
     gender: Optional[str] = "Not to say"
     secret_key: Optional[str] = None
+    secret_key_enabled: bool = True
     is_aligned: bool = False
     partner: Optional[PartnerInfo] = None
     last_active_at: Optional[datetime.datetime] = None
     profile_photo_url: Optional[str] = None
     location_city: Optional[str] = None
+    timezone: Optional[str] = None
     latest_ritual: Optional[Dict[str, Any]] = None
 
     model_config = {
@@ -123,3 +125,10 @@ class AlignResponse(BaseModel):
 
 class BreakAlignmentRequest(BaseModel):
     password: str = Field(..., description="User's login password to confirm breaking alignment")
+
+class RespondAlignmentRequest(BaseModel):
+    request_id: str
+    accept: bool
+
+class CancelAlignmentRequest(BaseModel):
+    request_id: str

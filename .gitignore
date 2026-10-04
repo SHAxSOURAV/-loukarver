@@ -336,3 +336,4 @@ coverage/
 *.swp
 *.swo
 env
+uploads/

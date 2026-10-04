@@ -5,7 +5,15 @@ import cv2
 import numpy as np
 from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File
 from fastapi.responses import FileResponse
-from app.schemas.relationships import RelationshipCreate, RelationshipResponse, AlignRequest, AlignResponse, BreakAlignmentRequest
+from app.schemas.relationships import (
+    RelationshipCreate,
+    RelationshipResponse,
+    AlignRequest,
+    AlignResponse,
+    BreakAlignmentRequest,
+    RespondAlignmentRequest,
+    CancelAlignmentRequest
+)
 from app.services.relationships import relationship_service
 from app.services.s3_utils import s3_service
 from app.routers.auth import get_current_user
@@ -97,6 +105,105 @@ async def create_relationship(submission: RelationshipCreate, current_user: dict
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred saving relationship data: {str(e)}"
+        )
+
+@router.post("/aligned/request", status_code=status.HTTP_200_OK)
+async def create_alignment_request_endpoint(payload: AlignRequest, current_user: dict = Depends(get_current_user)):
+    """Sends a connection request to the partner with the specified secret key."""
+    try:
+        req = await relationship_service.create_alignment_request(current_user["id"], payload.secret_key)
+        return {
+            "success": True,
+            "message": "Alignment request created.",
+            "data": req
+        }
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred sending alignment request: {str(e)}"
+        )
+
+@router.get("/aligned/request", status_code=status.HTTP_200_OK)
+async def get_alignment_request_status_endpoint(current_user: dict = Depends(get_current_user)):
+    """Gets current incoming and outgoing alignment requests."""
+    try:
+        data = await relationship_service.get_alignment_request_status(current_user["id"])
+        return {
+            "success": True,
+            "data": data
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred getting alignment status: {str(e)}"
+        )
+
+@router.post("/aligned/request/respond", status_code=status.HTTP_200_OK)
+async def respond_alignment_request_endpoint(payload: RespondAlignmentRequest, current_user: dict = Depends(get_current_user)):
+    """Approves or declines an incoming alignment request."""
+    try:
+        res = await relationship_service.respond_alignment_request(current_user["id"], payload.request_id, payload.accept)
+        return {
+            "success": True,
+            "message": "Request approved and aligned!" if payload.accept else "Request declined.",
+            "data": res
+        }
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred responding to request: {str(e)}"
+        )
+
+@router.post("/aligned/request/cancel", status_code=status.HTTP_200_OK)
+async def cancel_alignment_request_endpoint(payload: CancelAlignmentRequest, current_user: dict = Depends(get_current_user)):
+    """Cancels a pending outgoing alignment request."""
+    try:
+        res = await relationship_service.cancel_alignment_request(current_user["id"], payload.request_id)
+        return {
+            "success": True,
+            "message": "Request cancelled successfully.",
+            "data": res
+        }
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred cancelling request: {str(e)}"
+        )
+
+@router.post("/regenerate-key", status_code=status.HTTP_200_OK)
+async def regenerate_aligned_key_endpoint(current_user: dict = Depends(get_current_user)):
+    """Generates a new Aligned secret key for the unaligned user."""
+    try:
+        new_key = await relationship_service.regenerate_aligned_key(current_user["id"])
+        return {
+            "success": True,
+            "message": "New secret key generated successfully.",
+            "secret_key": new_key
+        }
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred regenerating key: {str(e)}"
         )
 
 @router.post("/aligned", response_model=AlignResponse, status_code=status.HTTP_200_OK, response_model_exclude_none=True)
@@ -201,6 +308,7 @@ async def break_alignment(payload: BreakAlignmentRequest, current_user: dict = D
         )
 
 @router.post("/photo", status_code=status.HTTP_200_OK)
+@router.post("/photos", status_code=status.HTTP_200_OK)
 async def upload_photo(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     """Uploads a profile photo for the authenticated user."""
     try:
@@ -224,10 +332,47 @@ async def upload_photo(file: UploadFile = File(...), current_user: dict = Depend
         filename = f"{uuid.uuid4().hex}.jpg" if content_type == "image/jpeg" else (file.filename or f"{uuid.uuid4().hex}.bin")
         file_url = await s3_service.upload_bytes(file_bytes, filename=filename, content_type=content_type, folder="profiles")
             
-        updated = await relationship_service.update_profile_photo(current_user["id"], file_url)
+        updated = await relationship_service.add_profile_photo(current_user["id"], file_url)
         return {"success": True, "message": "Photo uploaded successfully", "data": updated}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload photo: {str(e)}")
+
+@router.get("/photos", status_code=status.HTTP_200_OK)
+@router.get("/photo", status_code=status.HTTP_200_OK)
+async def get_my_photos(current_user: dict = Depends(get_current_user)):
+    """Retrieves all profile photos for the current user."""
+    try:
+        data = await relationship_service.get_profile_photos(current_user["id"])
+        return {"success": True, "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get photos: {str(e)}")
+
+@router.post("/photo/select", status_code=status.HTTP_200_OK)
+@router.post("/photos/select", status_code=status.HTTP_200_OK)
+async def select_photo(payload: dict, current_user: dict = Depends(get_current_user)):
+    """Selects an existing photo as the active profile photo."""
+    photo_id = payload.get("photo_id") or payload.get("url")
+    if not photo_id:
+        raise HTTPException(status_code=400, detail="Missing photo_id")
+    try:
+        updated = await relationship_service.select_profile_photo(current_user["id"], photo_id)
+        return {"success": True, "message": "Profile photo selected", "data": updated}
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to select photo: {str(e)}")
+
+@router.delete("/photo/{photo_id}", status_code=status.HTTP_200_OK)
+@router.delete("/photos/{photo_id}", status_code=status.HTTP_200_OK)
+async def delete_photo_item(photo_id: str, current_user: dict = Depends(get_current_user)):
+    """Deletes a specific profile photo from the user's gallery."""
+    try:
+        updated = await relationship_service.delete_profile_photo_item(current_user["id"], photo_id)
+        return {"success": True, "message": "Photo deleted successfully", "data": updated}
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete photo: {str(e)}")
 
 @router.get("/photo/{user_id}")
 async def get_photo(user_id: str, current_user: dict = Depends(get_current_user)):
@@ -258,6 +403,7 @@ async def get_photo(user_id: str, current_user: dict = Depends(get_current_user)
         raise HTTPException(status_code=500, detail=f"Failed to retrieve photo: {str(e)}")
 
 @router.delete("/photo", status_code=status.HTTP_200_OK)
+@router.delete("/photos", status_code=status.HTTP_200_OK)
 async def delete_photo(current_user: dict = Depends(get_current_user)):
     """Deletes the current user's profile photo."""
     try:

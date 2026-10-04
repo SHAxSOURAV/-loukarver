@@ -32,6 +32,10 @@ class NotificationType(str, Enum):
     MAP_CREATE = "Map Create"
     MAP_DELETE = "Map Delete"
     STATE_UPDATE = "State Update"
+    ALIGNMENT_REQUEST = "Alignment Request"
+    ALIGNMENT_CONNECTED = "Alignment Connected!"
+    RELATIONSHIP_REQUEST = "Alignment Request"
+    RELATIONSHIP_ACCEPT = "Alignment Connected!"
 
 class NotificationStatus(str, Enum):
     SCHEDULED = "Scheduled"
