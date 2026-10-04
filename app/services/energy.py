@@ -95,9 +95,9 @@ class EnergyService:
                     
         return new_doc
 
-    async def get_energy_logs(self, user_id: str) -> List[Dict[str, Any]]:
-        cursor = self.energy_logs.find({"user_id": user_id}).sort("created_at", -1)
-        docs = await cursor.to_list(length=None)
+    async def get_energy_logs(self, user_id: str, limit: int = 30) -> List[Dict[str, Any]]:
+        cursor = self.energy_logs.find({"user_id": user_id}).sort("created_at", -1).limit(limit)
+        docs = await cursor.to_list(length=limit)
         results = []
         for d in docs:
             d["id"] = str(d["_id"])

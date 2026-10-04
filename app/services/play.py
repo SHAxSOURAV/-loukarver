@@ -18,8 +18,8 @@ class PlayService:
         try:
             await self.vibe_connections.create_index([("user_id", 1), ("status", 1)])
             await self.vibe_connections.create_index([("partner_id", 1), ("status", 1)])
-            await self.vibe_connections.create_index([("user_id", 1), ("partner_id", 1)])
-            await self.db["vibe_check_profiles"].create_index("user_id")
+            await self.vibe_connections.create_index([("user_id", 1), ("partner_id", 1)], unique=True)
+            await self.db["vibe_check_profiles"].create_index("user_id", unique=True)
         except Exception as e:
             print(f"Error initializing play indexes: {e}")
 

@@ -40,7 +40,7 @@ class AdminService:
             "active_subscriptions": 0
         }
 
-    async def get_users(self, status_filter: str = "All") -> List[Dict[str, Any]]:
+    async def get_users(self, status_filter: str = "All", limit: int = 200, skip: int = 0) -> List[Dict[str, Any]]:
         users_col = self.db["users"]
         query = {"is_admin": {"$ne": True}}
         
@@ -56,7 +56,12 @@ class AdminService:
             query["is_deleted"] = {"$ne": True}
             query["is_hidden"] = {"$ne": True}
 
-        cursor = users_col.find(query).sort("_id", -1)
+        # Project out sensitive credentials and bound result set
+        cursor = users_col.find(
+            query, 
+            {"password_hash": 0, "otp": 0, "otp_expires": 0, "refresh_token": 0}
+        ).sort("_id", -1).skip(skip).limit(limit)
+        
         users = []
         async for doc in cursor:
             doc["id"] = str(doc.pop("_id"))
@@ -91,15 +96,25 @@ class AdminService:
 
     async def get_user_growth(self, year: int) -> Dict[str, Any]:
         users_col = self.db["users"]
-        # Initialize 12 months with 0
         months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
         growth_data = {month: 0 for month in months}
         
-        cursor = users_col.find({
-            "is_deleted": {"$ne": True},
-            "is_hidden": {"$ne": True},
-            "is_admin": {"$ne": True}
-        })
+        import datetime
+        start_dt = datetime.datetime(year, 1, 1, tzinfo=datetime.timezone.utc)
+        end_dt = datetime.datetime(year + 1, 1, 1, tzinfo=datetime.timezone.utc)
+        start_id = ObjectId.from_datetime(start_dt)
+        end_id = ObjectId.from_datetime(end_dt)
+        
+        # Scoped range scan using ObjectId index directly
+        cursor = users_col.find(
+            {
+                "_id": {"$gte": start_id, "$lt": end_id},
+                "is_deleted": {"$ne": True},
+                "is_hidden": {"$ne": True},
+                "is_admin": {"$ne": True}
+            },
+            {"_id": 1}
+        )
         async for doc in cursor:
             created_at = doc["_id"].generation_time
             if created_at.year == year:
@@ -158,25 +173,29 @@ class AdminService:
         start_date = datetime.datetime(year, 1, 1, tzinfo=datetime.timezone.utc)
         end_date = datetime.datetime(year + 1, 1, 1, tzinfo=datetime.timezone.utc)
         
-        # Determine collection and query based on feature
+        # Determine collection, query, and user linkage based on feature
+        user_field = "$user_id"
         if feature == "CheckIn":
             collection = self.db["checkins"]
             match_query = {"created_at": {"$gte": start_date, "$lt": end_date}}
         elif feature == "DatePlanning":
             collection = self.db["dates"]
             match_query = {"created_at": {"$gte": start_date, "$lt": end_date}}
+            user_field = "$creator_id"
         elif feature == "Appreciation":
             collection = self.db["thread_messages"]
             match_query = {
                 "created_at": {"$gte": start_date, "$lt": end_date},
                 "category": "Appreciation"
             }
+            user_field = "$creator_id"
         elif feature == "FutureGoal":
             collection = self.db["milestone_goals"]
             match_query = {"created_at": {"$gte": start_date, "$lt": end_date}}
         elif feature == "MapFeature":
             collection = self.db["map_places"]
             match_query = {"created_at": {"$gte": start_date, "$lt": end_date}}
+            user_field = "$creator_id"
         else:
             raise ValueError(f"Unknown feature: {feature}")
 
@@ -185,7 +204,7 @@ class AdminService:
             {"$addFields": {
                 "user_id_obj": {
                     "$convert": {
-                        "input": "$user_id",
+                        "input": user_field,
                         "to": "objectId",
                         "onError": None,
                         "onNull": None
@@ -269,7 +288,10 @@ class AdminService:
                 {"email": {"$regex": search, "$options": "i"}}
             ]
             
-        cursor = users_col.find(query).sort("_id", -1)
+        cursor = users_col.find(
+            query, 
+            {"password_hash": 0, "otp": 0, "otp_expires": 0, "refresh_token": 0}
+        ).sort("_id", -1).limit(100)
         users = []
         async for doc in cursor:
             _id_obj = doc.pop("_id")

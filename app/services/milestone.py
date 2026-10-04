@@ -79,27 +79,40 @@ class MilestoneService:
         partner_id = user_doc.get("partner", {}).get("user_id") if user_doc and user_doc.get("is_aligned") and user_doc.get("partner") else None
         if partner_id is None and not user_doc:
             docs, total, partner_id = await asyncio.gather(
-                cursor.to_list(length=None),
+                cursor.to_list(length=size),
                 self.milestones_collection.count_documents(query),
                 self._get_partner_id(user_id)
             )
+            names = await self._get_names(user_id, partner_id or "")
         else:
             docs, total = await asyncio.gather(
-                cursor.to_list(length=None),
+                cursor.to_list(length=size),
                 self.milestones_collection.count_documents(query)
             )
-        names = await self._get_names(user_id, partner_id or "")
+            user_name = user_doc.get("name", "User") if user_doc else "User"
+            partner_name = user_doc.get("partner", {}).get("name", "Partner") if (user_doc and user_doc.get("partner")) else "Partner"
+            names = {user_id: user_name}
+            if partner_id:
+                names[partner_id] = partner_name
 
         results = [await self._map_milestone(d, pin, user_timezone, names=names) for d in docs]
         return results, total
 
-    async def get_milestone_by_id(self, milestone_id: str, user_id: str, pin: Optional[str] = None, user_timezone: str = "UTC") -> Optional[Dict[str, Any]]:
+    async def get_milestone_by_id(self, milestone_id: str, user_id: str, pin: Optional[str] = None, user_timezone: str = "UTC", user_doc: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         doc = await self.milestones_collection.find_one({
             "_id": ObjectId(milestone_id),
             "$or": [{"creator_id": user_id}, {"partner_id": user_id}]
         })
         if doc:
-            return await self._map_milestone(doc, pin, user_timezone)
+            names = None
+            if user_doc:
+                partner_id = user_doc.get("partner", {}).get("user_id") if user_doc.get("is_aligned") and user_doc.get("partner") else None
+                user_name = user_doc.get("name", "User")
+                partner_name = user_doc.get("partner", {}).get("name", "Partner") if user_doc.get("partner") else "Partner"
+                names = {user_id: user_name}
+                if partner_id:
+                    names[partner_id] = partner_name
+            return await self._map_milestone(doc, pin, user_timezone, names=names)
         return None
 
     async def update_milestone(self, milestone_id: str, user_id: str, payload: MilestoneUpdate, pin: Optional[str] = None) -> Dict[str, Any]:

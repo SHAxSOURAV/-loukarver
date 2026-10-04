@@ -239,25 +239,27 @@ class MoodService:
 
     # --- Current Mood Sync ---
 
-    async def get_current_moods(self, user_id: str) -> List[Dict[str, Any]]:
-        user = await self.users.find_one({"_id": ObjectId(user_id)})
+    async def get_current_moods(self, user_id: str, user_doc: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        import asyncio
+        user = user_doc if user_doc is not None else await self.users.find_one({"_id": ObjectId(user_id)})
         partner_id = None
-        partner_name = "Partner"
         user_name = user.get("name", "Me") if user else "Me"
+        partner_name = "Partner"
         
         if user and user.get("partner"):
-            partner_id = user["partner"]["user_id"]
-            # Fetch partner's CURRENT name from the users collection (not the cached embedded doc)
-            partner_doc = await self.users.find_one({"_id": ObjectId(partner_id)})
-            if partner_doc:
-                partner_name = partner_doc.get("name", "Partner")
-            else:
-                partner_name = user["partner"].get("name", "Partner")
+            partner_id = user["partner"].get("user_id")
+            partner_name = user["partner"].get("name", "Partner")
             
         states = []
         
-        # User's latest mood
-        my_latest = await self.mood_history.find_one({"user_id": user_id}, sort=[("created_at", -1)])
+        tasks = [self.mood_history.find_one({"user_id": user_id}, sort=[("created_at", -1)])]
+        if partner_id:
+            tasks.append(self.mood_history.find_one({"user_id": partner_id}, sort=[("created_at", -1)]))
+            
+        results = await asyncio.gather(*tasks)
+        my_latest = results[0]
+        pt_latest = results[1] if partner_id else None
+        
         if my_latest:
             states.append({
                 "mood_name": my_latest["mood_name"],
@@ -267,17 +269,14 @@ class MoodService:
                 "author_name": user_name
             })
             
-        # Partner's latest mood
-        if partner_id:
-            pt_latest = await self.mood_history.find_one({"user_id": partner_id}, sort=[("created_at", -1)])
-            if pt_latest:
-                states.append({
-                    "mood_name": pt_latest["mood_name"],
-                    "mood_symbol": pt_latest["mood_symbol"],
-                    "updated_at": pt_latest["created_at"],
-                    "is_partner": True,
-                    "author_name": partner_name
-                })
+        if pt_latest:
+            states.append({
+                "mood_name": pt_latest["mood_name"],
+                "mood_symbol": pt_latest["mood_symbol"],
+                "updated_at": pt_latest["created_at"],
+                "is_partner": True,
+                "author_name": partner_name
+            })
                 
         return states
 

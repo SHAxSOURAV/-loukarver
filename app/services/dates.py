@@ -55,6 +55,11 @@ class DateService:
             await self.dates_collection.create_index([("partner_id", 1), ("utc_timestamp", -1)])
             await self.dates_collection.create_index([("creator_id", 1), ("utc_timestamp", 1)])
             await self.dates_collection.create_index([("partner_id", 1), ("utc_timestamp", 1)])
+            await self.dates_collection.create_index([("creator_id", 1), ("status", 1), ("utc_timestamp", 1)])
+            await self.dates_collection.create_index([("partner_id", 1), ("status", 1), ("utc_timestamp", 1)])
+            await self.dates_collection.create_index([("creator_id", 1), ("status", 1), ("utc_timestamp", -1)])
+            await self.dates_collection.create_index([("partner_id", 1), ("status", 1), ("utc_timestamp", -1)])
+            await self.dates_collection.create_index([("status", 1), ("utc_timestamp", 1)])
             await self.dates_collection.create_index("utc_timestamp")
             await self.dates_collection.create_index("status")
         except Exception as e:

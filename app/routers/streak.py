@@ -9,7 +9,7 @@ router = APIRouter(prefix="/streak", tags=["Streak"])
 @router.get("", response_model=StreakResponse, status_code=status.HTTP_200_OK)
 async def get_streak(timezone: str = Query("UTC"), current_user: dict = Depends(get_current_user)):
     try:
-        result = await streak_system.get_current_streak(current_user["id"], timezone)
+        result = await streak_system.get_current_streak(current_user["id"], timezone, user_doc=current_user)
         return StreakResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -25,7 +25,7 @@ async def get_weekly_breakdown(timezone: str = Query("UTC"), current_user: dict 
 @router.get("/partner", response_model=StreakPartnerResponse, status_code=status.HTTP_200_OK)
 async def get_partner_streak(timezone: str = Query("UTC"), current_user: dict = Depends(get_current_user)):
     try:
-        result = await streak_system.get_partner_streak(current_user["id"], timezone)
+        result = await streak_system.get_partner_streak(current_user["id"], timezone, user_doc=current_user)
         return StreakPartnerResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -30,7 +30,8 @@ async def list_places(
 ):
     """List all saved places with filtering and search."""
     try:
-        data, total = await map_service.get_places(current_user["id"], category, search, page, size, timezone)
+        partner_id = current_user.get("partner", {}).get("user_id") if current_user.get("is_aligned") and current_user.get("partner") else None
+        data, total = await map_service.get_places(current_user["id"], category, search, page, size, timezone, partner_id=partner_id)
         return PlacePaginatedResponse(success=True, data=data, total=total, page=page, size=size)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -96,7 +97,8 @@ async def get_map_stats(
     current_user: dict = Depends(get_current_user)
 ):
     """Get dashboard statistics for the map section."""
-    return await map_service.get_stats(current_user["id"])
+    partner_id = current_user.get("partner", {}).get("user_id") if current_user.get("is_aligned") and current_user.get("partner") else None
+    return await map_service.get_stats(current_user["id"], partner_id=partner_id, user_doc=current_user)
 
 @router.get("/overview", response_model=MapOverview)
 async def get_map_overview(
@@ -104,7 +106,8 @@ async def get_map_overview(
     current_user: dict = Depends(get_current_user)
 ):
     """Get data for map visualization, including places and calculated routes."""
-    return await map_service.get_overview(current_user["id"], timezone)
+    partner_id = current_user.get("partner", {}).get("user_id") if current_user.get("is_aligned") and current_user.get("partner") else None
+    return await map_service.get_overview(current_user["id"], timezone, partner_id=partner_id)
 
 @router.post("/place/{place_id}/request-delete", response_model=Union[PlaceResponse, GenericResponse])
 async def request_delete_place(

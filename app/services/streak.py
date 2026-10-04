@@ -141,12 +141,12 @@ class StreakSystem:
         )
         return streak, longest_streak
 
-    async def get_current_streak(self, user_id: str, timezone: str) -> Dict[str, Any]:
+    async def get_current_streak(self, user_id: str, timezone: str, user_doc: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         local_now = get_local_now(timezone)
         current_date_str = local_now.strftime("%Y-%m-%d")
         current_hour = local_now.hour
         
-        user = await self.users_collection.find_one({"_id": ObjectId(user_id)})
+        user = user_doc if user_doc is not None else await self.users_collection.find_one({"_id": ObjectId(user_id)})
         
         # We fetch dates again to accurately calculate is_at_risk and exact current streak 
         # (in case time has passed and current_streak cache is stale)
@@ -235,8 +235,8 @@ class StreakSystem:
             "current_streak": current_streak
         }
 
-    async def get_partner_streak(self, user_id: str, timezone: str) -> Dict[str, Any]:
-        user = await self.users_collection.find_one({"_id": ObjectId(user_id)})
+    async def get_partner_streak(self, user_id: str, timezone: str, user_doc: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        user = user_doc if user_doc is not None else await self.users_collection.find_one({"_id": ObjectId(user_id)})
         if not user or not user.get("partner"):
             return {
                 "partner_name": "None",
@@ -246,17 +246,16 @@ class StreakSystem:
             }
             
         partner_id = user["partner"]["user_id"]
-        partner = await self.users_collection.find_one({"_id": ObjectId(partner_id)})
+        partner_task = self.users_collection.find_one({"_id": ObjectId(partner_id)})
+        my_task = self.rituals_collection.find({"user_id": user_id}, {"completed_date": 1}).to_list(length=None)
+        partner_rituals_task = self.rituals_collection.find({"user_id": partner_id}, {"completed_date": 1}).to_list(length=None)
+
+        partner, my_docs, partner_docs = await asyncio.gather(
+            partner_task, my_task, partner_rituals_task
+        )
         
-        # Combined days
-        my_cursor = self.rituals_collection.find({"user_id": user_id}, {"completed_date": 1})
-        my_docs = await my_cursor.to_list(length=None)
         my_dates = {doc["completed_date"] for doc in my_docs}
-        
-        partner_cursor = self.rituals_collection.find({"user_id": partner_id}, {"completed_date": 1})
-        partner_docs = await partner_cursor.to_list(length=None)
         partner_dates = {doc["completed_date"] for doc in partner_docs}
-        
         combined_days = len(my_dates.intersection(partner_dates))
         
         return {

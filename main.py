@@ -75,32 +75,36 @@ from app.tasks.date_watcher import start_date_watcher
 
 @app.on_event("startup")
 async def startup_event():
-    await relationship_service.init_indexes()
-    await streak_system.init_indexes()
-    await mood_service.seed_defaults()
-    await idea_service.init_indexes()
-    await idea_service.seed_defaults()
-    await interaction_service.init_indexes()
+    import asyncio
     start_date_watcher()
-    await secret_service.init_indexes()
-    await date_service.init_indexes()
-    await thread_service.init_indexes()
-    await milestone_service.init_indexes()
-    await map_service.init_indexes()
-    await notification_service.init_indexes()
-    await vibe_check_service.init_indexes()
-    await vibe_card_service.init_indexes()
-    await vibe_date_service.init_indexes()
-    await vibe_pulse_service.init_indexes()
-    await mood_service.init_indexes()
-    await play_service.init_indexes()
-    await us_service.init_indexes()
-    await lifecycle_service.init_indexes()
-    await report_service.init_indexes()
-    await proposal_service.init_indexes()
-    await youtube_service.init_indexes()
-    await energy_service.init_indexes()
-    await watch_service.init_indexes()
+    await asyncio.gather(
+        relationship_service.init_indexes(),
+        streak_system.init_indexes(),
+        mood_service.seed_defaults(),
+        idea_service.init_indexes(),
+        idea_service.seed_defaults(),
+        interaction_service.init_indexes(),
+        secret_service.init_indexes(),
+        date_service.init_indexes(),
+        thread_service.init_indexes(),
+        milestone_service.init_indexes(),
+        map_service.init_indexes(),
+        notification_service.init_indexes(),
+        vibe_check_service.init_indexes(),
+        vibe_card_service.init_indexes(),
+        vibe_date_service.init_indexes(),
+        vibe_pulse_service.init_indexes(),
+        mood_service.init_indexes(),
+        play_service.init_indexes(),
+        us_service.init_indexes(),
+        lifecycle_service.init_indexes(),
+        report_service.init_indexes(),
+        proposal_service.init_indexes(),
+        youtube_service.init_indexes(),
+        energy_service.init_indexes(),
+        watch_service.init_indexes(),
+        return_exceptions=True
+    )
     
     # Start background scheduler
     from app.scheduler import start_scheduler

@@ -40,14 +40,21 @@ class IdeaService:
         self.idea_progress = self.db["idea_progress"]
         self.users = self.db["users"]
         self._global_ideas_cache: Optional[List[Dict[str, Any]]] = None
+        self._global_cats_cache: Optional[List[str]] = None
+        self._formatted_global_ideas: Optional[List[Dict[str, Any]]] = None
 
     async def init_indexes(self):
         try:
             # TTL Index for personalized ideas and progress - expire after 24 hours
             await self.personalized_ideas.create_index("created_at", expireAfterSeconds=86400)
             await self.idea_progress.create_index("created_at", expireAfterSeconds=86400)
-            await self.personalized_ideas.create_index("user_id")
+            await self.personalized_ideas.create_index([("user_id", 1), ("created_at", -1)])
+            await self.personalized_ideas.create_index([("user_id", 1), ("category", 1)])
+            await self.idea_progress.create_index([("user_ids", 1), ("is_completed", 1), ("countdown_end", 1)])
+            await self.idea_progress.create_index([("user_ids", 1), ("created_at", -1)])
+            await self.idea_progress.create_index([("idea_id", 1), ("user_ids", 1)])
             await self.global_ideas.create_index("name")
+            await self.global_ideas.create_index("category")
         except Exception as e:
             print(f"Index initialization note in ideas: {e}")
 
@@ -65,6 +72,21 @@ class IdeaService:
                 {"name": "Spa Day at Home", "time": "2 Hours", "tagline": "Relax and recharge.", "category": "Self-Care"}
             ]
             await self.global_ideas.insert_many(defaults)
+
+        try:
+            self._global_ideas_cache = await self.global_ideas.find({}).to_list(length=200)
+            self._global_cats_cache = await self.global_ideas.distinct("category")
+            formatted = []
+            for g in self._global_ideas_cache:
+                g_copy = dict(g)
+                g_copy["id"] = str(g_copy.get("_id", g_copy.get("id")))
+                g_copy.pop("_id", None)
+                g_copy["is_personalized"] = False
+                g_copy["user_id"] = None
+                formatted.append(g_copy)
+            self._formatted_global_ideas = formatted
+        except Exception:
+            pass
 
     async def _get_partner_id(self, user_id: str) -> Optional[str]:
         user = await self.users.find_one({"_id": ObjectId(user_id)}, {"partner.user_id": 1, "is_aligned": 1})
@@ -84,29 +106,34 @@ class IdeaService:
 
     # --- Idea CRUD ---
 
-    async def get_browse_ideas(self, user_id: str, page: int = 1, size: int = 10, partner_id: Optional[str] = None) -> Tuple[List[Dict[str, Any]], int]:
-        if partner_id is None:
+    async def get_browse_ideas(self, user_id: str, page: int = 1, size: int = 10, partner_id: Optional[str] = None, user_doc: Optional[dict] = None) -> Tuple[List[Dict[str, Any]], int]:
+        if user_doc:
+            partner_id = user_doc.get("partner", {}).get("user_id") if user_doc.get("is_aligned") and user_doc.get("partner") else None
+        elif partner_id is None:
             partner_id = await self._get_partner_id(user_id)
+            
         user_ids = [user_id]
         if partner_id:
             user_ids.append(partner_id)
 
         skip = (page - 1) * size
 
-        # Cache global ideas in memory to eliminate static DB queries
-        if self._global_ideas_cache is None:
-            self._global_ideas_cache = await self.global_ideas.find({}).to_list(length=200)
-        global_docs = self._global_ideas_cache
-        personalized_docs = await self.personalized_ideas.find({"user_id": {"$in": user_ids}}).to_list(length=200)
+        # Ensure in-memory formatted global ideas
+        if not self._formatted_global_ideas:
+            if self._global_ideas_cache is None:
+                self._global_ideas_cache = await self.global_ideas.find({}).to_list(length=200)
+            formatted = []
+            for g in (self._global_ideas_cache or []):
+                g_copy = dict(g)
+                g_copy["id"] = str(g_copy.get("_id", g_copy.get("id")))
+                g_copy.pop("_id", None)
+                g_copy["is_personalized"] = False
+                g_copy["user_id"] = None
+                formatted.append(g_copy)
+            self._formatted_global_ideas = formatted
 
-        all_ideas: List[Dict[str, Any]] = []
-        for g in global_docs:
-            g_copy = dict(g)
-            g_copy["id"] = str(g_copy["_id"])
-            g_copy.pop("_id", None)
-            g_copy["is_personalized"] = False
-            g_copy["user_id"] = None
-            all_ideas.append(g_copy)
+        all_ideas: List[Dict[str, Any]] = list(self._formatted_global_ideas or [])
+        personalized_docs = await self.personalized_ideas.find({"user_id": {"$in": user_ids}}).to_list(length=50)
 
         for p in personalized_docs:
             p_copy = dict(p)
@@ -160,16 +187,21 @@ class IdeaService:
         result = await self.personalized_ideas.delete_one({"_id": ObjectId(log_id), "user_id": {"$in": user_ids}})
         return result.deleted_count > 0
 
-    async def get_categories(self, user_id: str) -> List[str]:
-        partner_id = await self._get_partner_id(user_id)
+    async def get_categories(self, user_id: str, partner_id: Optional[str] = None, user_doc: Optional[dict] = None) -> List[str]:
+        if user_doc:
+            partner_id = user_doc.get("partner", {}).get("user_id") if user_doc.get("is_aligned") and user_doc.get("partner") else None
+        elif not partner_id:
+            partner_id = await self._get_partner_id(user_id)
+            
         user_ids = [user_id]
         if partner_id:
             user_ids.append(partner_id)
 
-        global_cats = await self.global_ideas.distinct("category")
+        if self._global_cats_cache is None:
+            self._global_cats_cache = await self.global_ideas.distinct("category")
+
         personal_cats = await self.personalized_ideas.distinct("category", {"user_id": {"$in": user_ids}})
-        
-        return sorted(list(set(global_cats + personal_cats)))
+        return sorted(list(set(self._global_cats_cache + personal_cats)))
 
     # --- Idea Selection & Progress ---
 
@@ -473,8 +505,16 @@ class IdeaService:
 
     # --- Filtered Getters ---
 
-    async def get_paginated_progress(self, user_id: str, status_type: str, page: int = 1, size: int = 10, viewer_timezone: str = "UTC") -> Tuple[List[Dict[str, Any]], int]:
-        partner_id = await self._get_partner_id(user_id)
+    async def get_paginated_progress(self, user_id: str, status_type: str, page: int = 1, size: int = 10, viewer_timezone: str = "UTC", partner_id: Optional[str] = None, user_doc: Optional[dict] = None) -> Tuple[List[Dict[str, Any]], int]:
+        if user_doc:
+            partner_id = user_doc.get("partner", {}).get("user_id") if user_doc.get("is_aligned") and user_doc.get("partner") else None
+            user_name = user_doc.get("name", "User")
+        elif not partner_id:
+            partner_id = await self._get_partner_id(user_id)
+            user_name = None
+        else:
+            user_name = None
+            
         couple_user_ids = sorted([user_id, partner_id]) if partner_id else [user_id]
         
         now = datetime.now(timezone.utc)
@@ -496,23 +536,32 @@ class IdeaService:
 
         skip = (page - 1) * size
         cursor = self.idea_progress.find(query).sort("created_at", -1).skip(skip).limit(size)
-        docs = await cursor.to_list(length=None)
-        total = await self.idea_progress.count_documents(query)
+        
+        docs_task = cursor.to_list(length=size)
+        total_task = self.idea_progress.count_documents(query)
+        
+        if partner_id:
+            names_task = self._get_names(user_id, partner_id)
+            docs, total, (u_name, p_name) = await asyncio.gather(docs_task, total_task, names_task)
+        else:
+            docs, total = await asyncio.gather(docs_task, total_task)
+            u_name, p_name = user_name or "User", "Partner"
 
         results = []
         for d in docs:
-            results.append(await self._map_progress_doc(d, user_id, viewer_timezone))
+            results.append(await self._map_progress_doc(d, user_id, viewer_timezone, user_name=u_name, partner_name=p_name))
         
         return results, total
 
-    async def _map_progress_doc(self, d: Dict[str, Any], user_id: str, viewer_timezone: str = "UTC") -> Dict[str, Any]:
+    async def _map_progress_doc(self, d: Dict[str, Any], user_id: str, viewer_timezone: str = "UTC", user_name: Optional[str] = None, partner_name: Optional[str] = None) -> Dict[str, Any]:
         d["id"] = str(d["_id"])
         
         idx = d["user_ids"].index(user_id)
         partner_idx = 1 - idx if len(d["user_ids"]) > 1 else None
         
-        partner_id = d["user_ids"][partner_idx] if partner_idx is not None else None
-        user_name, partner_name = await self._get_names(user_id, partner_id)
+        if user_name is None or (partner_idx is not None and partner_name is None):
+            partner_id = d["user_ids"][partner_idx] if partner_idx is not None else None
+            user_name, partner_name = await self._get_names(user_id, partner_id)
 
         d["user_name"] = user_name
         d["partner_name"] = partner_name

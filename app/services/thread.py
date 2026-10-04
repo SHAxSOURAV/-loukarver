@@ -54,6 +54,7 @@ class ThreadService:
         try:
             await self.messages_collection.create_index([("creator_id", 1), ("partner_id", 1)])
             await self.messages_collection.create_index([("creator_id", 1), ("created_at", -1)])
+            await self.messages_collection.create_index([("partner_id", 1), ("created_at", -1)])
             await self.messages_collection.create_index([("partner_id", 1), ("is_seen", 1)])
             await self.messages_collection.create_index([("creator_id", 1), ("category", 1)])
             await self.messages_collection.create_index("created_at")
@@ -379,9 +380,14 @@ class ThreadService:
         skip = (page - 1) * size
         cursor = self.messages_collection.find(query).sort("created_at", -1).skip(skip).limit(size)
         
-        update_task = self.messages_collection.update_many(
-            {"partner_id": user_id, "is_seen": False},
-            {"$set": {"is_delivered": True, "is_seen": True}}
+        # Only trigger update_many if partner exists to avoid wasted write locks
+        update_task = (
+            self.messages_collection.update_many(
+                {"partner_id": user_id, "is_seen": False},
+                {"$set": {"is_delivered": True, "is_seen": True}}
+            )
+            if partner_id
+            else asyncio.sleep(0)
         )
 
         _, docs, total = await asyncio.gather(
@@ -390,19 +396,26 @@ class ThreadService:
             self.messages_collection.count_documents(query)
         )
         
-        # Pre-fetch user profiles for all messages in one single query
-        all_uids = set()
+        # Pre-seed names and photos cache with current user to eliminate self lookup
+        names_cache: Dict[str, str] = {}
+        photos_cache: Dict[str, str] = {}
+        if user_doc:
+            names_cache[str(user_id)] = user_doc.get("name", "User")
+            photo = user_doc.get("profile_photo_url") or user_doc.get("photo_url") or user_doc.get("avatar")
+            if photo:
+                photos_cache[str(user_id)] = photo
+
+        # Collect user IDs from retrieved messages that are not yet in cache
+        missing_uids = set()
         for d in docs:
             cid = str(d.get("creator_id", ""))
             pid = str(d.get("partner_id", ""))
-            if cid: all_uids.add(cid)
-            if pid: all_uids.add(pid)
-        all_uids.add(str(user_id))
-        if partner_id: all_uids.add(str(partner_id))
+            if cid and cid not in names_cache: missing_uids.add(cid)
+            if pid and pid not in names_cache: missing_uids.add(pid)
+        if partner_id and str(partner_id) not in names_cache:
+            missing_uids.add(str(partner_id))
 
-        names_cache: Dict[str, str] = {}
-        photos_cache: Dict[str, str] = {}
-        obj_ids = [ObjectId(uid) for uid in all_uids if ObjectId.is_valid(uid)]
+        obj_ids = [ObjectId(uid) for uid in missing_uids if ObjectId.is_valid(uid)]
         if obj_ids:
             async for user in self.users.find({"_id": {"$in": obj_ids}}):
                 uid_str = str(user["_id"])

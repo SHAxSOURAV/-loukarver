@@ -19,8 +19,7 @@ async def get_browse_ideas(
 ):
     """Get a paginated list of global and personalized ideas."""
     try:
-        partner_id = current_user.get("partner", {}).get("user_id") if current_user.get("is_aligned") and current_user.get("partner") else None
-        data, total = await idea_service.get_browse_ideas(current_user["id"], page, size, partner_id=partner_id)
+        data, total = await idea_service.get_browse_ideas(current_user["id"], page, size, user_doc=current_user)
         return IdeaListResponse(success=True, data=data, total=total, page=page, size=size)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -29,7 +28,7 @@ async def get_browse_ideas(
 async def get_categories(current_user: dict = Depends(get_current_user)):
     """Get all unique categories from global and personalized ideas."""
     try:
-        data = await idea_service.get_categories(current_user["id"])
+        data = await idea_service.get_categories(current_user["id"], user_doc=current_user)
         return CategoryListResponse(success=True, data=data)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -109,7 +108,7 @@ async def get_active_ideas(
 ):
     """Get the couple's list of active ideas (Not expired, Not fully completed)."""
     try:
-        data, total = await idea_service.get_paginated_progress(current_user["id"], "active", page, size, viewer_timezone)
+        data, total = await idea_service.get_paginated_progress(current_user["id"], "active", page, size, viewer_timezone, user_doc=current_user)
         return IdeaProgressPaginatedResponse(success=True, data=data, total=total, page=page, size=size)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -123,7 +122,7 @@ async def get_completed_ideas(
 ):
     """Get the couple's list of completed ideas."""
     try:
-        data, total = await idea_service.get_paginated_progress(current_user["id"], "completed", page, size, viewer_timezone)
+        data, total = await idea_service.get_paginated_progress(current_user["id"], "completed", page, size, viewer_timezone, user_doc=current_user)
         return IdeaProgressPaginatedResponse(success=True, data=data, total=total, page=page, size=size)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -137,7 +136,7 @@ async def get_incomplete_ideas(
 ):
     """Get the couple's list of expired/incomplete ideas."""
     try:
-        data, total = await idea_service.get_paginated_progress(current_user["id"], "incomplete", page, size, viewer_timezone)
+        data, total = await idea_service.get_paginated_progress(current_user["id"], "incomplete", page, size, viewer_timezone, user_doc=current_user)
         return IdeaProgressPaginatedResponse(success=True, data=data, total=total, page=page, size=size)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

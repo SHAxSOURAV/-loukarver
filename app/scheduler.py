@@ -44,53 +44,66 @@ def schedule_watch_session(session_id: str, run_date: datetime):
     if run_date > datetime.now(timezone.utc):
         scheduler.add_job(fire_watch_notification, 'date', run_date=run_date, args=[session_id], id=job_id)
 
+async def _process_user_phase(u: dict):
+    try:
+        user_id = str(u["_id"])
+        partner = u.get("partner")
+        partner_id = partner.get("user_id") if partner else None
+        if not partner_id:
+            return
+            
+        data = await lifecycle_service.get_cycle_stats(user_id)
+        if data and data.get("stats"):
+            stats = data["stats"]
+            days_since_start = stats["days_since_start"]
+            avg_cycle = stats["cycle_length_used"]
+            days_in_current_cycle = days_since_start % avg_cycle
+            
+            phase_entered = None
+            if days_in_current_cycle == 0 and days_since_start > 0:
+                phase_entered = "Menstrual"
+            elif days_in_current_cycle == 5:
+                phase_entered = "Follicular"
+            elif days_in_current_cycle == 13:
+                phase_entered = "Ovulatory"
+            elif days_in_current_cycle == 16:
+                phase_entered = "Luteal"
+            
+            if phase_entered:
+                owner_name = u.get("name", "Your partner")
+                await notification_service.schedule_notification(
+                    sender_id=user_id,
+                    payload=NotificationCreate(
+                        recipient_id=partner_id,
+                        type=NotificationType.CYCLE_UPDATE,
+                        title="Phase Change",
+                        message=f"{owner_name} just entered her {phase_entered} phase.",
+                        scheduled_for=datetime.now(timezone.utc),
+                        timezone="UTC"
+                    )
+                )
+    except Exception as e:
+        logger.error(f"Error processing phase change for user {u.get('_id')}: {e}")
+
 async def check_phase_changes():
     """Nightly job to check female users' cycles and send notifications to partners on phase changes."""
     logger.info("Running nightly phase change check...")
     try:
-        # Find all female users
-        cursor = relationship_service.collection.find({"gender": "Female"})
+        import asyncio
+        # Target only female users with an active partner and sharing enabled
+        cursor = relationship_service.collection.find({
+            "gender": "Female",
+            "partner.user_id": {"$exists": True, "$ne": None},
+            "cycle_data_shared": {"$ne": False}
+        })
         users = await cursor.to_list(length=None)
         
-        for u in users:
-            user_id = str(u["_id"])
-            partner = u.get("partner")
-            partner_id = partner.get("user_id") if partner else None
-            is_shared = u.get("cycle_data_shared", True)
-            
-            if partner_id and is_shared:
-                data = await lifecycle_service.get_cycle_stats(user_id)
-                if data and data.get("stats"):
-                    stats = data["stats"]
-                    # If days_since_start > avg_cycle, it resets via modulo in get_cycle_stats
-                    # But get_cycle_stats returns days_since_start and cycle_length_used
-                    days_since_start = stats["days_since_start"]
-                    avg_cycle = stats["cycle_length_used"]
-                    days_in_current_cycle = days_since_start % avg_cycle
-                    
-                    phase_entered = None
-                    if days_in_current_cycle == 0 and days_since_start > 0:
-                        phase_entered = "Menstrual"
-                    elif days_in_current_cycle == 5:
-                        phase_entered = "Follicular"
-                    elif days_in_current_cycle == 13:
-                        phase_entered = "Ovulatory"
-                    elif days_in_current_cycle == 16:
-                        phase_entered = "Luteal"
-                    
-                    if phase_entered:
-                        owner_name = u.get("name", "Your partner")
-                        await notification_service.schedule_notification(
-                            sender_id=user_id,
-                            payload=NotificationCreate(
-                                recipient_id=partner_id,
-                                type=NotificationType.CYCLE_UPDATE,
-                                title="Phase Change",
-                                message=f"{owner_name} just entered her {phase_entered} phase.",
-                                scheduled_for=datetime.now(timezone.utc),
-                                timezone="UTC"
-                            )
-                        )
+        # Process in concurrent chunks of 25 to avoid blocking the event loop
+        chunk_size = 25
+        for i in range(0, len(users), chunk_size):
+            chunk = users[i:i + chunk_size]
+            await asyncio.gather(*[_process_user_phase(u) for u in chunk])
+            await asyncio.sleep(0.05)
     except Exception as e:
         logger.error(f"Error in check_phase_changes: {e}")
 

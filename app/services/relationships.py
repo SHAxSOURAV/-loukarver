@@ -24,6 +24,8 @@ class RelationshipService:
             (self.collection, "email", {}),
             (self.collection, "secret_key", {}),
             (self.collection, "partner.user_id", {"sparse": True}),
+            (self.collection, [("gender", 1), ("partner.user_id", 1)], {}),
+            (self.collection, [("is_admin", 1), ("is_deleted", 1), ("is_hidden", 1)], {}),
             (self.requests_collection, [("receiver_id", 1), ("status", 1)], {}),
             (self.requests_collection, [("sender_id", 1), ("status", 1)], {}),
             (self.requests_collection, [("created_at", -1)], {}),

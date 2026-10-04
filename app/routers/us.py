@@ -136,7 +136,7 @@ async def delete_next_meet(current_user: dict = Depends(get_current_user)):
 @router.get("/next-meet/countdown", response_model=NextMeetResponse)
 async def get_next_meet_countdown(viewer_timezone: str = Query("UTC", description="Your current IANA timezone (e.g. Asia/Dhaka)"), current_user: dict = Depends(get_current_user)):
     try:
-        result = await us_service.get_next_meet_countdown(current_user["id"], viewer_timezone)
+        result = await us_service.get_next_meet_countdown(current_user["id"], viewer_timezone, user_doc=current_user)
         if result is None:
             return NextMeetResponse(
                 success=True,

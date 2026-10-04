@@ -25,7 +25,7 @@ class UsService:
     async def init_indexes(self):
         try:
             await self.milestones_collection.create_index("user_id")
-            await self.next_meets_collection.create_index("user_id")
+            await self.next_meets_collection.create_index("user_ids")
         except Exception as e:
             print(f"Error initializing us indexes: {e}")
 
@@ -322,8 +322,10 @@ class UsService:
         user_ids = sorted([user_id, partner_id])
         await self.next_meets_collection.delete_one({"user_ids": user_ids})
 
-    async def get_next_meet_countdown(self, user_id: str, viewer_timezone: str = "UTC") -> Optional[Dict[str, Any]]:
-        partner_id = await self._get_partner_id(user_id)
+    async def get_next_meet_countdown(self, user_id: str, viewer_timezone: str = "UTC", user_doc: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        partner_id = user_doc.get("partner", {}).get("user_id") if user_doc and user_doc.get("is_aligned") and user_doc.get("partner") else None
+        if partner_id is None and not user_doc:
+            partner_id = await self._get_partner_id(user_id)
         if not partner_id:
             return None
             

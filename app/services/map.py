@@ -55,15 +55,12 @@ class MapService:
         return names
 
     async def _geocode(self, city: str, country: str) -> Tuple[float, float]:
-        """Extremely resilient geocoding with multiple providers and fallback logic."""
+        """Resilient geocoding with multiple providers and fast fallback."""
         if not city or not country:
             return 0.0, 0.0
 
-        # Nominatim policy: 1 req/sec. We add a small artificial delay to be safe
-        await asyncio.sleep(1.0) 
-
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 AlignedTracker/1.0",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AlignedTracker/1.0",
             "Accept-Language": "en"
         }
 
@@ -80,7 +77,7 @@ class MapService:
             }
         ]
 
-        async with httpx.AsyncClient(timeout=15.0, verify=False) as client: # verify=False for local testing if needed
+        async with httpx.AsyncClient(timeout=4.0, verify=False) as client:
             for provider in providers:
                 try:
                     response = await client.get(provider["url"], params=provider["params"], headers=headers)
@@ -88,11 +85,22 @@ class MapService:
                         data = response.json()
                         if data and isinstance(data, list) and len(data) > 0:
                             return float(data[0]["lat"]), float(data[0]["lon"])
-                except Exception as e:
-                    print(f"Geocoding provider {provider['url']} failed: {str(e)}")
+                except Exception:
                     continue
         
         return 0.0, 0.0
+
+    async def _async_repair_geocode(self, place_id: str, city: str, country: str):
+        """Asynchronously geocodes a place in the background without blocking GET requests."""
+        try:
+            new_lat, new_lng = await self._geocode(city, country)
+            if new_lat != 0.0 or new_lng != 0.0:
+                await self.places_collection.update_one(
+                    {"_id": ObjectId(place_id)},
+                    {"$set": {"lat": new_lat, "lng": new_lng}}
+                )
+        except Exception:
+            pass
 
     async def create_place(self, user_id: str, payload: PlaceCreate) -> Dict[str, Any]:
         partner_id = await self._get_partner_id(user_id)
@@ -119,38 +127,55 @@ class MapService:
 
         return await self._map_place(new_doc, payload.timezone, user_id)
 
-    async def get_places(self, user_id: str, category: Optional[PlaceCategory] = None, search: Optional[str] = None, page: int = 1, size: int = 20, user_timezone: str = "UTC") -> Tuple[List[Dict[str, Any]], int]:
-        query = {"$or": [{"creator_id": user_id}, {"partner_id": user_id}]}
+    async def get_places(self, user_id: str, category: Optional[PlaceCategory] = None, search: Optional[str] = None, page: int = 1, size: int = 20, user_timezone: str = "UTC", partner_id: Optional[str] = None) -> Tuple[List[Dict[str, Any]], int]:
+        if not partner_id:
+            partner_id = await self._get_partner_id(user_id)
+            
+        user_ids = [user_id]
+        if partner_id:
+            user_ids.append(partner_id)
+
+        user_filter = {"$or": [{"creator_id": {"$in": user_ids}}, {"partner_id": {"$in": user_ids}}]}
+        conditions = [user_filter]
         
         if category:
-            query["category"] = category
+            conditions.append({"category": category})
         if search:
-            query["$or"] = [
-                {"city": {"$regex": search, "$options": "i"}},
-                {"country": {"$regex": search, "$options": "i"}},
-                {"description": {"$regex": search, "$options": "i"}}
-            ]
+            search_regex = {"$regex": search, "$options": "i"}
+            conditions.append({
+                "$or": [
+                    {"city": search_regex},
+                    {"country": search_regex},
+                    {"description": search_regex}
+                ]
+            })
+
+        query = {"$and": conditions} if len(conditions) > 1 else user_filter
 
         skip = (page - 1) * size
         cursor = self.places_collection.find(query).sort("created_at", -1).skip(skip).limit(size)
         
-        docs_task = cursor.to_list(length=None)
+        docs_task = cursor.to_list(length=size)
         total_task = self.places_collection.count_documents(query)
-        partner_task = self._get_partner_id(user_id)
+        names_task = self._get_names(user_id, partner_id or "")
         
-        docs, total, partner_id = await asyncio.gather(docs_task, total_task, partner_task)
-        names = await self._get_names(user_id, partner_id or "")
+        docs, total, names = await asyncio.gather(docs_task, total_task, names_task)
 
         results = [await self._map_place(d, user_timezone, user_id, names=names) for d in docs]
         return results, total
 
     async def get_place_by_id(self, place_id: str, user_id: str, user_timezone: str = "UTC") -> Optional[Dict[str, Any]]:
+        partner_id = await self._get_partner_id(user_id)
+        user_ids = [user_id]
+        if partner_id: user_ids.append(partner_id)
+        
         doc = await self.places_collection.find_one({
             "_id": ObjectId(place_id),
-            "$or": [{"creator_id": user_id}, {"partner_id": user_id}]
+            "$or": [{"creator_id": {"$in": user_ids}}, {"partner_id": {"$in": user_ids}}]
         })
         if doc:
-            return await self._map_place(doc, user_timezone, user_id)
+            names = await self._get_names(user_id, partner_id or "")
+            return await self._map_place(doc, user_timezone, user_id, names=names)
         return None
 
     async def update_place(self, place_id: str, user_id: str, payload: PlaceUpdate) -> Dict[str, Any]:
@@ -329,22 +354,25 @@ class MapService:
 
     # --- Stats & Overview ---
 
-    async def get_stats(self, user_id: str) -> Dict[str, Any]:
-        partner_id = await self._get_partner_id(user_id)
+    async def get_stats(self, user_id: str, partner_id: Optional[str] = None, user_doc: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if not partner_id:
+            partner_id = user_doc.get("partner", {}).get("user_id") if user_doc and user_doc.get("is_aligned") and user_doc.get("partner") else None
+            if partner_id is None and not user_doc:
+                partner_id = await self._get_partner_id(user_id)
         user_ids = [user_id]
         if partner_id: user_ids.append(partner_id)
         
         query = {"creator_id": {"$in": user_ids}}
+        projection = {"country": 1, "city": 1, "category": 1, "_id": 0}
+        places = await self.places_collection.find(query, projection).to_list(length=None)
         
-        places = await self.places_collection.find(query).to_list(length=None)
+        countries = set(p.get("country", "") for p in places if p.get("country"))
+        cities = set(p.get("city", "") for p in places if p.get("city"))
         
-        countries = set(p["country"] for p in places)
-        cities = set(p["city"] for p in places)
-        
-        together_count = sum(1 for p in places if p["category"] == PlaceCategory.TOGETHER)
-        bucket_count = sum(1 for p in places if p["category"] == PlaceCategory.BUCKET)
-        upcoming_count = sum(1 for p in places if p["category"] == PlaceCategory.UPCOMING)
-        home_count = sum(1 for p in places if p["category"] == PlaceCategory.HOME)
+        together_count = sum(1 for p in places if p.get("category") == PlaceCategory.TOGETHER)
+        bucket_count = sum(1 for p in places if p.get("category") == PlaceCategory.BUCKET)
+        upcoming_count = sum(1 for p in places if p.get("category") == PlaceCategory.UPCOMING)
+        home_count = sum(1 for p in places if p.get("category") == PlaceCategory.HOME)
 
         return {
             "total_countries": len(countries),
@@ -355,22 +383,24 @@ class MapService:
             "home_count": home_count
         }
 
-    async def get_overview(self, user_id: str, user_timezone: str = "UTC") -> Dict[str, Any]:
-        partner_id = await self._get_partner_id(user_id)
+    async def get_overview(self, user_id: str, user_timezone: str = "UTC", partner_id: Optional[str] = None) -> Dict[str, Any]:
+        if not partner_id:
+            partner_id = await self._get_partner_id(user_id)
         user_ids = [user_id]
         if partner_id: user_ids.append(partner_id)
         
         query = {"creator_id": {"$in": user_ids}}
         
-        places_docs = await self.places_collection.find(query).sort("created_at", 1).to_list(length=None)
+        places_task = self.places_collection.find(query).sort("created_at", 1).to_list(length=None)
+        names_task = self._get_names(user_id, partner_id or "")
+        places_docs, names = await asyncio.gather(places_task, names_task)
         
         places = []
         for d in places_docs:
-            places.append(await self._map_place(d, user_timezone, user_id))
+            places.append(await self._map_place(d, user_timezone, user_id, names=names))
         
         # Calculate Routes: chronological connection of "Together" places
         together_places = [p for p in places if p["category"] == PlaceCategory.TOGETHER]
-        # Sort by visit_date if present, else created_at
         def sort_key(p):
             if p.get("visit_date"):
                 try:
@@ -391,7 +421,23 @@ class MapService:
                 "points": points
             })
             
-        stats = await self.get_stats(user_id)
+        # Compute stats directly from places_docs without duplicate DB scan
+        countries = set(p.get("country", "") for p in places_docs if p.get("country"))
+        cities = set(p.get("city", "") for p in places_docs if p.get("city"))
+        
+        together_count = sum(1 for p in places_docs if p.get("category") == PlaceCategory.TOGETHER)
+        bucket_count = sum(1 for p in places_docs if p.get("category") == PlaceCategory.BUCKET)
+        upcoming_count = sum(1 for p in places_docs if p.get("category") == PlaceCategory.UPCOMING)
+        home_count = sum(1 for p in places_docs if p.get("category") == PlaceCategory.HOME)
+
+        stats = {
+            "total_countries": len(countries),
+            "total_cities": len(cities),
+            "together_count": together_count,
+            "bucket_count": bucket_count,
+            "upcoming_count": upcoming_count,
+            "home_count": home_count
+        }
         
         return {
             "places": places,
@@ -404,17 +450,14 @@ class MapService:
         d["id"] = place_id
         if "_id" in d: del d["_id"]
         
-        # --- AUTO-REPAIR LOGIC ---
-        # If coordinates are missing (0,0), attempt to re-geocode and update the DB
-        if d.get("lat") == 0.0 and d.get("lng") == 0.0:
-            new_lat, new_lng = await self._geocode(d["city"], d["country"])
-            if new_lat != 0.0 or new_lng != 0.0:
-                await self.places_collection.update_one(
-                    {"_id": ObjectId(place_id)},
-                    {"$set": {"lat": new_lat, "lng": new_lng}}
-                )
-                d["lat"] = new_lat
-                d["lng"] = new_lng
+        # --- NON-BLOCKING AUTO-REPAIR ---
+        # If coordinates are missing (0,0), trigger background geocoding without stalling the GET response
+        if d.get("lat") == 0.0 and d.get("lng") == 0.0 and d.get("city") and d.get("country"):
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._async_repair_geocode(place_id, d["city"], d["country"]))
+            except Exception:
+                pass
         
         if names is None:
             partner_id = await self._get_partner_id(current_user_id)

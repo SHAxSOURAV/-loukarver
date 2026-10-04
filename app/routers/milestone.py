@@ -44,7 +44,7 @@ async def get_milestone(
 ):
     """Get details of a specific milestone."""
     try:
-        milestone = await milestone_service.get_milestone_by_id(milestone_id, current_user["id"], pin, timezone)
+        milestone = await milestone_service.get_milestone_by_id(milestone_id, current_user["id"], pin, timezone, user_doc=current_user)
         if not milestone:
             raise HTTPException(status_code=404, detail="Milestone not found.")
         return milestone

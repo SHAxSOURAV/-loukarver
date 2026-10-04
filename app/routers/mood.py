@@ -53,7 +53,7 @@ async def delete_mood_option(mood_id: str, current_user: dict = Depends(get_curr
 async def get_current_mood(current_user: dict = Depends(get_current_user)):
     """Get the most recent mood state for both the user and their partner."""
     try:
-        results = await mood_service.get_current_moods(current_user["id"])
+        results = await mood_service.get_current_moods(current_user["id"], user_doc=current_user)
         return CurrentMoodResponse(success=True, data=results)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

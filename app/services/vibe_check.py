@@ -32,6 +32,7 @@ class VibeCheckService:
             await self.connections.create_index("partner_id")
             await self.requests.create_index([("sender_id", 1), ("recipient_id", 1)], unique=True)
             await self.requests.create_index("recipient_id")
+            await self.requests.create_index("sender_id")
             await self.invites.create_index("invite_code", unique=True)
             await self.invites.create_index("inviter_id")
             await self.cumulative_scores.create_index([("user_id", 1), ("partner_id", 1)], unique=True)
@@ -211,8 +212,18 @@ class VibeCheckService:
         now = datetime.now(timezone.utc)
         active_threshold = now - timedelta(minutes=5)
         
+        ans_queries = [
+            user_answers_col.find_one({
+                "user_id": c["partner_id"],
+                "partner_id": user_id,
+                "journey_day": c.get("current_journey_day", 1)
+            })
+            for c in connection_docs
+        ]
+        ans_docs = await asyncio.gather(*ans_queries) if ans_queries else []
+        
         results = []
-        for c in connection_docs:
+        for c, p_ans_doc in zip(connection_docs, ans_docs):
             p_id = c["partner_id"]
             p_profile = profile_map.get(p_id, {})
             
@@ -227,11 +238,6 @@ class VibeCheckService:
                     
             # Pending questions check
             current_day = c.get("current_journey_day", 1)
-            p_ans_doc = await user_answers_col.find_one({
-                "user_id": p_id,
-                "partner_id": user_id,
-                "journey_day": current_day
-            })
             answers_count = len(p_ans_doc.get("answers", [])) if p_ans_doc else 0
             pending_questions = max(0, 3 - answers_count)
             
