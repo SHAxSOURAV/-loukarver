@@ -59,16 +59,8 @@ export const ProfessionalVideoPlayer: React.FC<ProfessionalVideoPlayerProps> = (
   const lastTapRef = useRef<number>(0);
   const seekFeedbackTimerRef = useRef<any>(null);
 
-  // Memoized video source with progressive content-type hint for AWS S3 presigned URLs
-  const videoSource = React.useMemo(() => {
-    if (!uri) return null;
-    return typeof uri === 'string'
-      ? { uri, contentType: 'progressive' as const }
-      : uri;
-  }, [uri]);
-
-  // Initialize expo-video player
-  const player = useVideoPlayer(videoSource, (p) => {
+  // Initialize expo-video player directly with the remote streaming URI
+  const player = useVideoPlayer(uri, (p) => {
     p.loop = false;
     p.timeUpdateEventInterval = 0.25;
     p.play();
@@ -84,14 +76,14 @@ export const ProfessionalVideoPlayer: React.FC<ProfessionalVideoPlayerProps> = (
     }
     if (player.status === 'readyToPlay') {
       setIsBuffering(false);
+      if (!isPausedExternal && !player.playing) {
+        player.play();
+      }
     } else if (player.status === 'error') {
       setIsBuffering(false);
       setHasError(true);
     }
-    if (player.playing) {
-      setIsPlaying(true);
-      setHasEnded(false);
-    }
+    setIsPlaying(player.playing);
 
     const subPlaying = player.addListener('playingChange', (event) => {
       setIsPlaying(event.isPlaying);
@@ -108,9 +100,21 @@ export const ProfessionalVideoPlayer: React.FC<ProfessionalVideoPlayerProps> = (
         if (player.duration > 0) {
           setDuration(player.duration);
         }
+        if (!isPausedExternal && !player.playing) {
+          player.play();
+        }
       } else if (event.status === 'error') {
         setIsBuffering(false);
         setHasError(true);
+      }
+    });
+
+    const subSourceLoad = player.addListener('sourceLoad', (event) => {
+      if (event.duration > 0) {
+        setDuration(event.duration);
+      }
+      if (!isPausedExternal && !player.playing) {
+        player.play();
       }
     });
 
@@ -134,14 +138,23 @@ export const ProfessionalVideoPlayer: React.FC<ProfessionalVideoPlayerProps> = (
       setIsMuted(event.muted);
     });
 
+    // Fallback interval to capture duration as soon as native player finishes buffering
+    const durationInterval = setInterval(() => {
+      if (player && player.duration > 0) {
+        setDuration((prev) => (prev <= 0 ? player.duration : prev));
+      }
+    }, 500);
+
     return () => {
+      clearInterval(durationInterval);
       subPlaying.remove();
       subStatus.remove();
+      subSourceLoad.remove();
       subTime.remove();
       subEnd.remove();
       subMuted.remove();
     };
-  }, [player, isSeeking, duration, onEnded]);
+  }, [player, isSeeking, duration, onEnded, isPausedExternal]);
 
   // Sync external pause (e.g. modal state)
   useEffect(() => {
@@ -237,10 +250,12 @@ export const ProfessionalVideoPlayer: React.FC<ProfessionalVideoPlayerProps> = (
       player.replay();
       setHasEnded(false);
       setIsPlaying(true);
-    } else if (isPlaying) {
+    } else if (player.playing) {
       player.pause();
+      setIsPlaying(false);
     } else {
       player.play();
+      setIsPlaying(true);
     }
     showControlsWithTimeout();
   };
@@ -298,6 +313,7 @@ export const ProfessionalVideoPlayer: React.FC<ProfessionalVideoPlayerProps> = (
         player={player}
         contentFit="contain"
         nativeControls={false}
+        surfaceType={Platform.OS === 'android' ? 'textureView' : undefined}
       />
 
       {/* Main Touch Area for controls toggle & double-tap skip */}

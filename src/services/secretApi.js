@@ -175,21 +175,25 @@ export const getSecretViewInfo = async (secretIdOrObj) => {
 };
 
 export const requestRewatchSecret = async (secretId) => {
-  const response = await api.post(`/secret/${secretId}/rewatch/request`);
+  const targetId = typeof secretId === 'object' ? (secretId?.id || secretId?._id) : secretId;
+  const response = await api.post(`/secret/${targetId}/rewatch/request`);
   return response.data;
 };
 
 export const approveRewatchSecret = async (secretId) => {
-  const response = await api.post(`/secret/${secretId}/rewatch/approve`);
+  const targetId = typeof secretId === 'object' ? (secretId?.id || secretId?._id) : secretId;
+  const response = await api.post(`/secret/${targetId}/rewatch/approve`);
   return response.data;
 };
 
-export const declineRewatchSecret = async (sessionId) => {
-  const response = await api.post(`/secret/${sessionId}/rewatch/decline`);
+export const declineRewatchSecret = async (secretId) => {
+  const targetId = typeof secretId === 'object' ? (secretId?.id || secretId?._id) : secretId;
+  const response = await api.post(`/secret/${targetId}/rewatch/decline`);
   return response.data;
 };
 
-export const revokeSecret = async (sessionId) => {
-  const response = await api.delete(`/secret/${sessionId}/revoke`);
+export const revokeSecret = async (secretId) => {
+  const targetId = typeof secretId === 'object' ? (secretId?.id || secretId?._id) : secretId;
+  const response = await api.delete(`/secret/${targetId}/revoke`);
   return response.data;
 };

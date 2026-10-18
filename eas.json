@@ -1,35 +1,40 @@
-{
-  "cli": {
-    "version": ">= 16.28.0",
-    "appVersionSource": "remote"
-  },
-  "build": {
-    "development": {
-      "developmentClient": true,
-      "distribution": "internal"
-    },
-    "preview": {
-      "distribution": "internal",
-      "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://13-61-230-140.sslip.io",
-        "EXPO_PUBLIC_ONESIGNAL_APP_ID": "9451cca9-5c30-4d6b-ad37-695bd389ca9f"
-      },
-      "android": {
-        "buildType": "apk"
-      }
-    },
-    "production": {
-      "autoIncrement": true,
-      "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://13-61-230-140.sslip.io",
-        "EXPO_PUBLIC_ONESIGNAL_APP_ID": "9451cca9-5c30-4d6b-ad37-695bd389ca9f"
-      },
-      "android": {
-        "buildType": "app-bundle"
-      }
-    }
-  },
-  "submit": {
-    "production": {}
-  }
+﻿{
+    "cli":  {
+                "version":  "\u003e= 16.28.0",
+                "appVersionSource":  "remote"
+            },
+    "build":  {
+                  "development":  {
+                                      "developmentClient":  true,
+                                      "distribution":  "internal",
+                                      "android":  {
+                                                      "buildType":  "apk"
+                                                  }
+                                  },
+                  "preview":  {
+                                  "distribution":  "internal",
+                                  "env":  {
+                                              "EXPO_PUBLIC_BACKEND_URL":  "https://13-61-230-140.sslip.io",
+                                              "EXPO_PUBLIC_ONESIGNAL_APP_ID":  "9451cca9-5c30-4d6b-ad37-695bd389ca9f"
+                                          },
+                                  "android":  {
+                                                  "buildType":  "apk"
+                                              }
+                              },
+                  "production":  {
+                                     "autoIncrement":  true,
+                                     "env":  {
+                                                 "EXPO_PUBLIC_BACKEND_URL":  "https://13-61-230-140.sslip.io",
+                                                 "EXPO_PUBLIC_ONESIGNAL_APP_ID":  "9451cca9-5c30-4d6b-ad37-695bd389ca9f"
+                                             },
+                                     "android":  {
+                                                     "buildType":  "app-bundle"
+                                                 }
+                                 }
+              },
+    "submit":  {
+                   "production":  {
+
+                                  }
+               }
 }

@@ -83,6 +83,24 @@ function useGlobalWebSocket() {
               DeviceEventEmitter.emit('REFRESH_DATES_DATA');
             } else if (typeof data.type === 'string' && data.type.startsWith("SECRET_")) {
               DeviceEventEmitter.emit('REFRESH_SECRET_DATA');
+              DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
+              if (data.type === 'SECRET_REWATCH_REQUESTED') {
+                DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
+                  type: 'Rewatch Request',
+                  title: 'Rewatch Requested',
+                  message: 'Your partner requested to rewatch your confidential message.',
+                  metadata: data,
+                });
+                DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
+              } else if (data.type === 'SECRET_REWATCH_APPROVED') {
+                DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
+                  type: 'Rewatch Approved',
+                  title: 'Rewatch Approved',
+                  message: 'Your partner approved! You can now view the message one more time.',
+                  metadata: data,
+                });
+                DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
+              }
             } else if (data.type === "NEW_NOTIFICATION") {
               const notif = data.notification || {};
               DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {

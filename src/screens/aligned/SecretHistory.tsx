@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, StyleSheet, Pressable, Modal, Image, DeviceEventEmitter, ActivityIndicator, Animated, useWindowDimensions } from 'react-native';
+import { View, StyleSheet, Pressable, Modal, Image, DeviceEventEmitter, ActivityIndicator, Animated, useWindowDimensions, Platform } from 'react-native';
 import { CustomAlert } from '../../components/ui/CustomAlert';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -10,6 +10,7 @@ import { getReceivedSecrets, getSecretViewInfo, requestRewatchSecret } from '../
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import ReAnimated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as FileSystem from 'expo-file-system/legacy';
 import { ProfessionalVideoPlayer } from '../../components/ui/ProfessionalVideoPlayer';
 
 const isCurrentMediaVideo = (secret: any, uri: string | null): boolean => {
@@ -32,6 +33,8 @@ export const SecretHistory: React.FC = () => {
   const [viewingSecret, setViewingSecret] = useState<any | null>(null);
   const [mediaDataUri, setMediaDataUri] = useState<string | null>(null);
   const [isPaused, setIsPaused] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
+  const [requestingSecretId, setRequestingSecretId] = useState<string | null>(null);
 
   const progress = useRef(new Animated.Value(1)).current;
   const animRef = useRef<Animated.CompositeAnimation | null>(null);
@@ -164,22 +167,64 @@ export const SecretHistory: React.FC = () => {
   const handleViewSecretIn = async (secret: any) => {
     setViewingSecret(secret);
     setMediaDataUri(null);
+    setDownloadProgress(0);
     setIsPaused(false);
 
     try {
       const targetId = secret?.id || secret?._id;
       const viewInfo = await getSecretViewInfo(targetId);
-      if (viewInfo?.url) {
-        setViewingSecret((prev: any) => ({ ...prev, ...viewInfo }));
-        setMediaDataUri(viewInfo.url);
-        return;
+      if (!viewInfo?.url) {
+        throw new Error("Could not resolve video stream URL.");
       }
-      throw new Error("Could not resolve media stream URL.");
+
+      setViewingSecret((prev: any) => ({ ...prev, ...viewInfo }));
+
+      const isVideo = isCurrentMediaVideo(viewInfo, viewInfo.url);
+
+      // Fast sequential caching for native mobile:
+      // Eliminates Range request high-latency roundtrips from Europe to Bangladesh
+      if (isVideo && Platform.OS !== 'web' && viewInfo.url.startsWith('http')) {
+        const localExt = (viewInfo.filename || '').toLowerCase().endsWith('.mov') ? '.mov' : '.mp4';
+        const localFileUri = `${FileSystem.cacheDirectory}secret_stream_${targetId}${localExt}`;
+
+        try {
+          const fileInfo = await FileSystem.getInfoAsync(localFileUri);
+          if (fileInfo.exists && fileInfo.size > 0) {
+            setMediaDataUri(localFileUri);
+            setDownloadProgress(null);
+            return;
+          }
+        } catch (e) {}
+
+        const downloadResumable = FileSystem.createDownloadResumable(
+          viewInfo.url,
+          localFileUri,
+          {},
+          (progress) => {
+            if (progress.totalBytesExpectedToWrite > 0) {
+              const pct = Math.min(100, Math.round((progress.totalBytesWritten / progress.totalBytesExpectedToWrite) * 100));
+              setDownloadProgress(pct);
+            }
+          }
+        );
+
+        const result = await downloadResumable.downloadAsync();
+        if (result?.uri) {
+          setMediaDataUri(result.uri);
+          setDownloadProgress(null);
+          return;
+        }
+      }
+
+      // Fallback or image
+      setMediaDataUri(viewInfo.url);
+      setDownloadProgress(null);
     } catch (apiErr: any) {
       console.error("Failed to load secret media:", apiErr);
       const errorMsg = apiErr?.response?.data?.detail || apiErr?.message || "Could not decrypt secret.";
       setViewingSecret(null);
       setMediaDataUri(null);
+      setDownloadProgress(null);
       CustomAlert.alert("Secret Unavailable", errorMsg);
       loadSecrets();
     }
@@ -188,21 +233,32 @@ export const SecretHistory: React.FC = () => {
   const handleViewSecretOut = () => {
     if (!viewingSecretRef.current) return;
     setSecrets(prev => prev.filter(s => s.id !== viewingSecretRef.current.id));
+    if (mediaDataUri && mediaDataUri.startsWith('file://')) {
+      FileSystem.deleteAsync(mediaDataUri, { idempotent: true }).catch(() => {});
+    }
     setViewingSecret(null);
     setMediaDataUri(null);
+    setDownloadProgress(null);
     progress.stopAnimation();
     setIsPaused(false);
     loadSecrets();
   };
 
   const handleRequestRewatch = async (secretId: string) => {
+    if (requestingSecretId) return;
+    setRequestingSecretId(secretId);
     try {
       await requestRewatchSecret(secretId);
-      loadSecrets();
+      setSecrets(prev => prev.map(s => (s.id === secretId || s._id === secretId) ? { ...s, rewatch_status: 'requested' } : s));
+      await loadSecrets();
       CustomAlert.alert("Requested", "Rewatch request sent to your partner.");
-    } catch (e) {
+    } catch (e: any) {
       console.log(e);
-      CustomAlert.alert("Error", "Could not request rewatch.");
+      const msg = e?.response?.data?.detail || e?.message || "Could not request rewatch.";
+      CustomAlert.alert("Error", msg);
+      loadSecrets();
+    } finally {
+      setRequestingSecretId(null);
     }
   };
 
@@ -240,8 +296,14 @@ export const SecretHistory: React.FC = () => {
               <AppText variant="mono" style={{ color: '#fff', fontSize: 12 }}>WAITING...</AppText>
             </View>
           ) : (
-            <Pressable onPress={() => handleRequestRewatch(secret.id)} style={[styles.openButton, { backgroundColor: '#8C7F75' }]}>
-              <AppText variant="mono" style={{ color: '#fff', fontSize: 12 }}>ASK TO REWATCH</AppText>
+            <Pressable 
+              onPress={() => handleRequestRewatch(secret.id)} 
+              disabled={requestingSecretId === secret.id}
+              style={[styles.openButton, { backgroundColor: '#8C7F75', opacity: requestingSecretId === secret.id ? 0.7 : 1 }]}
+            >
+              <AppText variant="mono" style={{ color: '#fff', fontSize: 12 }}>
+                {requestingSecretId === secret.id ? "REQUESTING..." : "ASK TO REWATCH"}
+              </AppText>
             </Pressable>
           )}
         </View>
@@ -251,14 +313,17 @@ export const SecretHistory: React.FC = () => {
 
   const renderMediaViewer = () => {
     if (!mediaDataUri) {
+      const isPreparingStream = downloadProgress !== null && downloadProgress >= 0;
       return (
         <View style={viewerStyles.loadingContainer}>
           <View style={viewerStyles.loadingPulse}>
             <ActivityIndicator size="large" color="#E06C6C" />
           </View>
-          <AppText variant="mono" style={viewerStyles.loadingText}>DECRYPTING...</AppText>
+          <AppText variant="mono" style={viewerStyles.loadingText}>
+            {isPreparingStream ? `DECRYPTING ${downloadProgress}%` : 'DECRYPTING...'}
+          </AppText>
           <AppText variant="serifItalic" style={viewerStyles.loadingSubtext}>
-            Preparing your secret media
+            {isPreparingStream ? 'Optimizing high-speed secure stream' : 'Preparing your secret media'}
           </AppText>
         </View>
       );
