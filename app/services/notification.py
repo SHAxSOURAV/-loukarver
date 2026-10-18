@@ -54,7 +54,8 @@ class NotificationService:
                 "id": new_doc["id"],
                 "type": new_doc["type"],
                 "title": new_doc["title"],
-                "message": new_doc["message"]
+                "message": new_doc["message"],
+                "metadata": new_doc.get("metadata") or {}
             }
         }
         await ws_manager.broadcast_to_user(payload.recipient_id, ws_payload)
@@ -152,13 +153,26 @@ class NotificationService:
             {"_id": ObjectId(notification_id), "recipient_id": user_id},
             {"$set": {"status": NotificationStatus.SEEN, "seen_at": now_utc}}
         )
-        if result.modified_count > 0:
+        if result.matched_count > 0:
             await self.users.update_one(
                 {"_id": ObjectId(user_id)},
                 {"$set": {"last_active_at": now_utc}}
             )
             return True
         return False
+
+    async def mark_all_as_seen(self, user_id: str) -> int:
+        now_utc = datetime.now(timezone.utc)
+        result = await self.notifications_collection.update_many(
+            {"recipient_id": user_id, "status": {"$ne": NotificationStatus.SEEN}},
+            {"$set": {"status": NotificationStatus.SEEN, "seen_at": now_utc}}
+        )
+        if result.modified_count > 0:
+            await self.users.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": {"last_active_at": now_utc}}
+            )
+        return result.modified_count
 
     async def mark_as_unread(self, notification_id: str, user_id: str) -> bool:
         result = await self.notifications_collection.update_one(
@@ -226,6 +240,7 @@ class NotificationService:
         if payload.city: update_data["location_city"] = payload.city
         if payload.latitude: update_data["location_lat"] = payload.latitude
         if payload.longitude: update_data["location_lon"] = payload.longitude
+        if payload.timezone: update_data["timezone"] = payload.timezone
         
         await self.users.update_one(
             {"_id": ObjectId(user_id)},

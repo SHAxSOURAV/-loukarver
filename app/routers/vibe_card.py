@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, WebSocket,
 from typing import List, Optional, Dict
 import asyncio
 
-from app.routers.auth import get_current_user
+from app.routers.auth import get_current_user, require_not_aligned
 from app.schemas.vibe_card import (
     VibeCardDaily, VibeAnswerSubmit, VibeMatchResult, VibeMultiMatchResult,
     VibeStreakResponse, GenericResponse, VibeHistoryPaginatedResponse
@@ -54,7 +54,7 @@ async def get_vibe_card_history(
     search_term: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_not_aligned)
 ):
     """Fetch history of answers between user and partners. If partner_id is not provided, shows all partners."""
     try:
@@ -79,7 +79,7 @@ async def get_vibe_card_history(
 async def get_daily_cards(
     partner_id: str = Query(..., description="The ID of the connected partner for this journey"),
     timezone: str = Query("UTC"),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_not_aligned)
 ):
     """Fetch today's 3 'This or That' questions."""
     daily_data = await vibe_card_service.get_daily_questions(current_user["id"], partner_id, timezone)
@@ -100,7 +100,7 @@ async def get_daily_cards(
 @router.post("/answer", response_model=GenericResponse)
 async def submit_vibe_answers(
     payload: VibeAnswerSubmit,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_not_aligned)
 ):
     """Submit your answers for today's Vibe Cards."""
     try:
@@ -129,7 +129,7 @@ async def submit_vibe_answers(
 async def get_vibe_results(
     partner_id: Optional[str] = Query(None),
     timezone: str = Query("UTC"),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_not_aligned)
 ):
     """Compare today's results with partners. If partner_id is not provided, shows all connected partners who answered today."""
     try:
@@ -144,7 +144,7 @@ async def get_vibe_results(
 async def get_vibe_streak(
     partner_id: Optional[str] = Query(None),
     timezone: str = Query("UTC"),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_not_aligned)
 ):
     """Get your current Vibe Card answering streak."""
     return await vibe_card_service.get_streak(current_user["id"], partner_id, timezone)

@@ -1010,8 +1010,11 @@ class RelationshipService:
                 max_ts = max_ts.replace(tzinfo=timezone.utc)
             partner["last_active_at"] = max_ts
 
-        if not partner.get("location_city") and partner.get("timezone") and "/" in partner.get("timezone"):
-            partner["location_city"] = partner["timezone"].split("/")[-1].replace("_", " ")
+        if not partner.get("location_city"):
+            if partner.get("city_name"):
+                partner["location_city"] = partner["city_name"]
+            elif partner.get("timezone") and "/" in partner.get("timezone"):
+                partner["location_city"] = partner["timezone"].split("/")[-1].replace("_", " ")
 
         return partner
 

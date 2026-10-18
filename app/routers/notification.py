@@ -68,6 +68,12 @@ async def list_my_notifications(
     data, total, unread_count = await notification_service.get_my_notifications(current_user["id"], page, size, timezone, type_list, is_hidden)
     return NotificationPaginatedResponse(success=True, data=data, total=total, unread_count=unread_count, page=page, size=size)
 
+@router.patch("/seen-all", response_model=GenericResponse)
+async def mark_all_notifications_seen(current_user: dict = Depends(get_current_user)):
+    """Mark all unread notifications as seen for the current user."""
+    count = await notification_service.mark_all_as_seen(current_user["id"])
+    return GenericResponse(success=True, message=f"Marked {count} notifications as seen.")
+
 @router.patch("/{notification_id}/seen", response_model=GenericResponse)
 async def mark_notification_seen(notification_id: str, current_user: dict = Depends(get_current_user)):
     """Mark a notification as seen."""

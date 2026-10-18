@@ -75,6 +75,7 @@ class VibeCheckData(BaseModel):
 class VibeCheckGenericResponse(BaseModel):
     success: bool
     message: str
+    is_aligned: Optional[bool] = False
 
 # --- Invite System Schemas ---
 

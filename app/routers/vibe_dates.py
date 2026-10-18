@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import List, Optional
-from app.routers.auth import get_current_user
+from app.routers.auth import require_not_aligned
 from app.schemas.vibe_dates import (
     VibeDateCreate, VibeDateUpdate, VibeDateResponse, 
     VibeDateRespondRequest, VibeDateListResponse
@@ -10,7 +10,7 @@ from app.services.vibe_dates import vibe_date_service
 router = APIRouter(prefix="/vibedates", tags=["Vibe Dates"])
 
 @router.post("", response_model=VibeDateResponse, status_code=status.HTTP_201_CREATED)
-async def propose_vibe_date(payload: VibeDateCreate, current_user: dict = Depends(get_current_user)):
+async def propose_vibe_date(payload: VibeDateCreate, current_user: dict = Depends(require_not_aligned)):
     """Propose a new date to a Vibe partner."""
     try:
         return await vibe_date_service.propose_date(current_user["id"], payload)
@@ -25,7 +25,7 @@ async def list_vibe_dates(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     timezone: str = Query("UTC"),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_not_aligned)
 ):
     """List all date proposals sent or received with pagination."""
     try:
@@ -46,7 +46,7 @@ async def list_hidden_vibe_dates(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     timezone: str = Query("UTC"),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_not_aligned)
 ):
     """List all hidden date proposals with pagination."""
     try:
@@ -65,7 +65,7 @@ async def list_hidden_vibe_dates(
 @router.get("/pending-count")
 async def get_pending_dates_count(
     partner_id: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_not_aligned)
 ):
     """Get count of unread/pending dates received by current user."""
     try:
@@ -75,7 +75,7 @@ async def get_pending_dates_count(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{date_id}", response_model=VibeDateResponse)
-async def get_vibe_date_details(date_id: str, current_user: dict = Depends(get_current_user)):
+async def get_vibe_date_details(date_id: str, current_user: dict = Depends(require_not_aligned)):
     """Get details of a specific date proposal."""
     try:
         return await vibe_date_service.get_date_by_id(date_id, current_user["id"])
@@ -87,7 +87,7 @@ async def get_vibe_date_details(date_id: str, current_user: dict = Depends(get_c
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.patch("/{date_id}", response_model=VibeDateResponse)
-async def update_vibe_date(date_id: str, payload: VibeDateUpdate, current_user: dict = Depends(get_current_user)):
+async def update_vibe_date(date_id: str, payload: VibeDateUpdate, current_user: dict = Depends(require_not_aligned)):
     """Update date details. If already accepted, status resets to pending and partner is notified."""
     try:
         return await vibe_date_service.update_date(current_user["id"], date_id, payload)
@@ -99,7 +99,7 @@ async def update_vibe_date(date_id: str, payload: VibeDateUpdate, current_user: 
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{date_id}/respond", response_model=VibeDateResponse)
-async def respond_to_vibe_date(date_id: str, payload: VibeDateRespondRequest, current_user: dict = Depends(get_current_user)):
+async def respond_to_vibe_date(date_id: str, payload: VibeDateRespondRequest, current_user: dict = Depends(require_not_aligned)):
     """Accept, reject, or propose changes to a date."""
     try:
         return await vibe_date_service.respond_to_date(current_user["id"], date_id, payload)
@@ -111,7 +111,7 @@ async def respond_to_vibe_date(date_id: str, payload: VibeDateRespondRequest, cu
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/{date_id}")
-async def delete_vibe_date(date_id: str, current_user: dict = Depends(get_current_user)):
+async def delete_vibe_date(date_id: str, current_user: dict = Depends(require_not_aligned)):
     """Delete a date proposal."""
     try:
         success = await vibe_date_service.delete_date(current_user["id"], date_id)
@@ -124,7 +124,7 @@ async def delete_vibe_date(date_id: str, current_user: dict = Depends(get_curren
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{date_id}/cancel")
-async def cancel_vibe_date(date_id: str, current_user: dict = Depends(get_current_user)):
+async def cancel_vibe_date(date_id: str, current_user: dict = Depends(require_not_aligned)):
     """Cancel an accepted date proposal."""
     try:
         success = await vibe_date_service.cancel_date(current_user["id"], date_id)
@@ -137,7 +137,7 @@ async def cancel_vibe_date(date_id: str, current_user: dict = Depends(get_curren
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/mark-seen")
-async def mark_dates_seen(current_user: dict = Depends(get_current_user)):
+async def mark_dates_seen(current_user: dict = Depends(require_not_aligned)):
     """Mark all pending dates as seen."""
     try:
         await vibe_date_service.mark_dates_seen(current_user["id"])
@@ -146,7 +146,7 @@ async def mark_dates_seen(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{date_id}/complete")
-async def complete_vibe_date(date_id: str, current_user: dict = Depends(get_current_user)):
+async def complete_vibe_date(date_id: str, current_user: dict = Depends(require_not_aligned)):
     """Mark an accepted date as completed."""
     try:
         success = await vibe_date_service.complete_date(current_user["id"], date_id)
@@ -159,7 +159,7 @@ async def complete_vibe_date(date_id: str, current_user: dict = Depends(get_curr
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{date_id}/hide")
-async def hide_vibe_date(date_id: str, current_user: dict = Depends(get_current_user)):
+async def hide_vibe_date(date_id: str, current_user: dict = Depends(require_not_aligned)):
     """Hide a date proposal from the current user's history."""
     try:
         success = await vibe_date_service.hide_date(current_user["id"], date_id)
@@ -172,7 +172,7 @@ async def hide_vibe_date(date_id: str, current_user: dict = Depends(get_current_
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{date_id}/unhide")
-async def unhide_vibe_date(date_id: str, current_user: dict = Depends(get_current_user)):
+async def unhide_vibe_date(date_id: str, current_user: dict = Depends(require_not_aligned)):
     """Unhide a date proposal to show it again in history."""
     try:
         success = await vibe_date_service.unhide_date(current_user["id"], date_id)
@@ -185,7 +185,7 @@ async def unhide_vibe_date(date_id: str, current_user: dict = Depends(get_curren
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{date_id}/delete-for-me")
-async def delete_vibe_date_for_me(date_id: str, current_user: dict = Depends(get_current_user)):
+async def delete_vibe_date_for_me(date_id: str, current_user: dict = Depends(require_not_aligned)):
     """Delete a date proposal from the current user's view permanently."""
     try:
         success = await vibe_date_service.delete_date_for_me(current_user["id"], date_id)

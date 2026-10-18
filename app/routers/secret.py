@@ -89,6 +89,48 @@ async def patch_screenshot_protection(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/view-url/{secret_id}")
+async def get_secret_view_url_endpoint(
+    secret_id: str,
+    timezone: str = Query("UTC", description="Your current IANA timezone (e.g. Asia/Dhaka)"),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Retrieves the direct viewing URL and metadata for a secret.
+    """
+    try:
+        doc = await secret_service.get_secret_metadata(secret_id, current_user["id"], timezone)
+        if doc["recipient_id"] == current_user["id"]:
+            await secret_service.mark_secret_viewed(secret_id)
+
+        file_url = doc.get("stored_filename", "")
+        if file_url and "amazonaws.com" in file_url:
+            from app.services.s3_utils import s3_service
+            file_url = s3_service.generate_presigned_view_url(file_url, expires_in=3600)
+        elif not file_url.startswith("http") and not file_url.startswith("/"):
+            file_url = f"/{file_url}"
+
+        filename = doc.get("filename", "")
+        file_type = doc.get("file_type", "")
+        is_video = bool((file_type and file_type.startswith("video")) or filename.endswith(".mp4") or filename.endswith(".mov"))
+
+        return {
+            "success": True,
+            "data": {
+                "id": str(doc.get("id") or doc.get("_id")),
+                "url": file_url,
+                "filename": filename,
+                "file_type": file_type,
+                "is_video": is_video,
+                "prevent_screenshot": doc.get("prevent_screenshot", True),
+                "delete_after": doc.get("delete_after", "24 Hours")
+            }
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/view/{secret_id}")
 async def view_secret(
     secret_id: str,
@@ -108,10 +150,12 @@ async def view_secret(
         if doc["recipient_id"] == current_user["id"]:
             await secret_service.mark_secret_viewed(secret_id)
             
-        file_url = doc.get("stored_filename")
+        file_url = doc.get("stored_filename", "")
         if file_url and "amazonaws.com" in file_url:
+            from app.services.s3_utils import s3_service
+            presigned = s3_service.generate_presigned_view_url(file_url, expires_in=3600)
             from fastapi.responses import RedirectResponse
-            return RedirectResponse(url=file_url)
+            return RedirectResponse(url=presigned)
         else:
             file_path = secret_service.get_full_path(doc["stored_filename"])
             return FileResponse(

@@ -40,6 +40,15 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     user["id"] = str(user["_id"])
     return user
 
+async def require_not_aligned(current_user: dict = Depends(get_current_user)) -> dict:
+    """Ensures user is not in an aligned relationship before accessing Vibe Check."""
+    if current_user.get("is_aligned") or current_user.get("partner"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are currently in an aligned relationship. You cannot access Vibe Check unless you break your aligned connection."
+        )
+    return current_user
+
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
 async def signup(payload: SignupRequest):
     """Registers a new user account and triggers an email verification OTP code."""

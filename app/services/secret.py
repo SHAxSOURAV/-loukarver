@@ -217,10 +217,17 @@ class SecretService:
         return result.matched_count > 0
 
     async def get_secret_metadata(self, secret_id: str, user_id: str, user_timezone: str = "UTC") -> Dict[str, Any]:
+        now_utc = datetime.now(timezone.utc)
         doc = await self.secrets_collection.find_one({
             "_id": ObjectId(secret_id),
-            "$or": [{"recipient_id": user_id}, {"sender_id": user_id}],
-            "is_viewed": False
+            "$and": [
+                {"$or": [{"recipient_id": user_id}, {"sender_id": user_id}]},
+                {"$or": [
+                    {"is_viewed": False},
+                    {"rewatch_status": "approved"},
+                    {"viewed_at": {"$gte": now_utc - timedelta(minutes=5)}}
+                ]}
+            ]
         })
         if not doc:
             raise ValueError("Secret not found or already deleted.")

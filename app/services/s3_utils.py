@@ -100,4 +100,27 @@ class S3Service:
         except Exception:
             pass
 
+    def generate_presigned_view_url(self, file_url_or_key: str, expires_in: int = 3600) -> str:
+        """
+        Generates a secure temporary pre-signed URL for direct streaming/downloading from AWS S3.
+        Safe for private buckets and native mobile video players.
+        """
+        if not self.s3_client or not file_url_or_key or "amazonaws.com" not in file_url_or_key:
+            return file_url_or_key
+            
+        try:
+            if ".amazonaws.com/" in file_url_or_key:
+                key = file_url_or_key.split(".amazonaws.com/")[1]
+            else:
+                key = file_url_or_key
+            return self.s3_client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': self.bucket_name, 'Key': key},
+                ExpiresIn=expires_in
+            )
+        except Exception as e:
+            print(f"[S3Service Warning] Presigned URL generation failed: {e}")
+            return file_url_or_key
+
 s3_service = S3Service()
+
