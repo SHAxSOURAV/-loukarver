@@ -59,8 +59,16 @@ export const ProfessionalVideoPlayer: React.FC<ProfessionalVideoPlayerProps> = (
   const lastTapRef = useRef<number>(0);
   const seekFeedbackTimerRef = useRef<any>(null);
 
+  // Memoized video source with progressive content-type hint and native caching
+  const videoSource = React.useMemo(() => {
+    if (!uri) return null;
+    return typeof uri === 'string'
+      ? { uri, contentType: 'progressive' as const, useCaching: true }
+      : uri;
+  }, [uri]);
+
   // Initialize expo-video player directly with the remote streaming URI
-  const player = useVideoPlayer(uri, (p) => {
+  const player = useVideoPlayer(videoSource || uri, (p) => {
     p.loop = false;
     p.timeUpdateEventInterval = 0.25;
     p.play();

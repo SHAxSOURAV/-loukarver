@@ -4,4 +4,6 @@ export const Fonts = {
   instrumentSerif: 'InstrumentSerif-Regular',
   instrumentSerifItalic: 'InstrumentSerif-Italic',
   mono: 'JetBrainsMono-Regular',
+  monoMedium: 'JetBrainsMono-Medium',
+  monoSemiBold: 'JetBrainsMono-SemiBold',
 } as const;

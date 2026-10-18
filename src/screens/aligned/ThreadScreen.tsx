@@ -74,6 +74,9 @@ export const ThreadScreen: React.FC = () => {
   const [checkinA3, setCheckinA3] = useState('');
   const [promptTab, setPromptTab] = useState<'romantic' | 'desire'>('romantic');
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
+
   const [isSendingVoice, setIsSendingVoice] = useState(false);
   const [isSendingPhoto, setIsSendingPhoto] = useState(false);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
@@ -340,7 +343,12 @@ export const ThreadScreen: React.FC = () => {
       return;
     }
     if (!previewUri) return;
+    if (isSubmittingRef.current || isSendingVoice || isSubmitting) return;
+
+    isSubmittingRef.current = true;
     setIsSendingVoice(true);
+    setIsSubmitting(true);
+
     const file = {
       uri: previewUri,
       type: 'audio/m4a',
@@ -355,33 +363,70 @@ export const ThreadScreen: React.FC = () => {
       console.error('Failed to send voice', e);
       Alert.alert('Upload Failed', e?.response?.data?.detail || e.message || String(e));
     } finally {
+      isSubmittingRef.current = false;
       setIsSendingVoice(false);
+      setIsSubmitting(false);
     }
   };
 
   const handleSend = async () => {
+    if (isSubmittingRef.current || isSubmitting) return;
+
     if (!isAligned) {
       Alert.alert('Partner Required', 'Please connect with your partner first to post in Thread.');
       return;
     }
     const trimmedText = textVal.trim();
 
-    try {
-      if (composeType === 'photo') {
-        setIsSendingPhoto(true);
+    // Preliminary validations before locking submission state
+    if (composeType === 'letter') {
+      if (!trimmedText) {
+        Alert.alert('Empty Letter', 'Please write something in your letter before sending.');
+        return;
       }
+    } else if (composeType === 'appreciation') {
+      if (!trimmedText) {
+        Alert.alert('Empty Appreciation', 'Please write your appreciation message before sending.');
+        return;
+      }
+    } else if (composeType === 'prompt') {
+      if (!trimmedText) {
+        Alert.alert('Empty Question', 'Please enter a question for your prompt before sending.');
+        return;
+      }
+    } else if (composeType === 'replyPrompt' && replyPromptId) {
+      if (!trimmedText) {
+        Alert.alert('Empty Answer', 'Please enter your answer before replying to the prompt.');
+        return;
+      }
+    } else if (composeType === 'checkin') {
+      const c1 = checkinA1.trim();
+      const c2 = checkinA2.trim();
+      const c3 = checkinA3.trim();
+      if (!c1 && !c2 && !c3) {
+        Alert.alert('Empty Check-in', 'Please answer at least one check-in question before submitting.');
+        return;
+      }
+    } else if (composeType === 'voice') {
+      return; // Voice has custom flow
+    } else if (composeType === 'photo') {
+      if (!photoUri) {
+        Alert.alert('No Photo Selected', 'Please select a photo before sending.');
+        return;
+      }
+    }
 
+    // Synchronously lock submission immediately to prevent duplicate taps/requests
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+    if (composeType === 'photo') {
+      setIsSendingPhoto(true);
+    }
+
+    try {
       if (composeType === 'letter') {
-        if (!trimmedText) {
-          Alert.alert('Empty Letter', 'Please write something in your letter before sending.');
-          return;
-        }
         await postLetter({ text: trimmedText });
       } else if (composeType === 'appreciation') {
-        if (!trimmedText) {
-          Alert.alert('Empty Appreciation', 'Please write your appreciation message before sending.');
-          return;
-        }
         await postAppreciation({ text: trimmedText });
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
         const hour = new Date().getHours();
@@ -390,26 +435,14 @@ export const ThreadScreen: React.FC = () => {
         else if (hour > 17) tod = 'evening';
         await completeRitual({ ritual_type: 'appreciation', text: trimmedText, timezone: tz, time_name: tod });
       } else if (composeType === 'prompt') {
-        if (!trimmedText) {
-          Alert.alert('Empty Question', 'Please enter a question for your prompt before sending.');
-          return;
-        }
         const mappedPromptType = promptTab === 'romantic' ? 'Romantic' : 'Desired';
         await askPrompt({ prompt_type: mappedPromptType, question_text: trimmedText, type: 'custom' });
       } else if (composeType === 'replyPrompt' && replyPromptId) {
-        if (!trimmedText) {
-          Alert.alert('Empty Answer', 'Please enter your answer before replying to the prompt.');
-          return;
-        }
         await replyToPrompt(replyPromptId, { answer: trimmedText });
       } else if (composeType === 'checkin') {
         const c1 = checkinA1.trim();
         const c2 = checkinA2.trim();
         const c3 = checkinA3.trim();
-        if (!c1 && !c2 && !c3) {
-          Alert.alert('Empty Check-in', 'Please answer at least one check-in question before submitting.');
-          return;
-        }
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
         const today = new Date().toLocaleDateString('en-US', {
           month: '2-digit', day: '2-digit', year: 'numeric'
@@ -428,16 +461,9 @@ export const ThreadScreen: React.FC = () => {
         });
 
         await completeRitual({ ritual_type: 'checkin' });
-      } else if (composeType === 'voice') {
-        return; // Voice has custom flow
       } else if (composeType === 'photo') {
-        if (!photoUri) {
-          Alert.alert('No Photo Selected', 'Please select a photo before sending.');
-          setIsSendingPhoto(false);
-          return;
-        }
         const file = {
-          uri: photoUri,
+          uri: photoUri!,
           type: 'image/jpeg',
           name: `photo_${Date.now()}.jpg`
         };
@@ -455,6 +481,8 @@ export const ThreadScreen: React.FC = () => {
       console.log("Error sending:", e);
       Alert.alert('Upload Failed', e?.response?.data?.detail || String(e));
     } finally {
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
       if (composeType === 'photo') {
         setIsSendingPhoto(false);
       }
@@ -619,7 +647,7 @@ export const ThreadScreen: React.FC = () => {
               value={textVal}
               onChangeText={setTextVal}
             />
-            <AppButton full variant="solid" size="lg" onPress={handleSend}>
+            <AppButton full variant="solid" size="lg" onPress={handleSend} disabled={isSubmitting} loading={isSubmitting}>
               Send Letter →
             </AppButton>
           </View>
@@ -653,7 +681,7 @@ export const ThreadScreen: React.FC = () => {
                   <Pressable style={styles.discardBtn} onPress={discardPreview}>
                     <Ionicons name="trash-outline" size={20} color={Colors.accent} />
                   </Pressable>
-                  <AppButton style={{ flex: 1, marginLeft: 16 }} variant="solid" size="lg" onPress={sendVoiceMessage} loading={isSendingVoice}>
+                  <AppButton style={{ flex: 1, marginLeft: 16 }} variant="solid" size="lg" onPress={sendVoiceMessage} disabled={isSendingVoice || isSubmitting} loading={isSendingVoice || isSubmitting}>
                     SEND VOICE →
                   </AppButton>
                 </View>
@@ -718,8 +746,8 @@ export const ThreadScreen: React.FC = () => {
               value={textVal}
               onChangeText={setTextVal}
             />
-            <AppButton full variant="solid" size="lg" onPress={handleSend} disabled={!photoUri || isSendingPhoto} loading={isSendingPhoto}>
-              {isSendingPhoto ? "SENDING..." : "Share →"}
+            <AppButton full variant="solid" size="lg" onPress={handleSend} disabled={!photoUri || isSendingPhoto || isSubmitting} loading={isSendingPhoto || isSubmitting}>
+              {isSendingPhoto || isSubmitting ? "SENDING..." : "Share →"}
             </AppButton>
           </View>
         )}
@@ -751,7 +779,7 @@ export const ThreadScreen: React.FC = () => {
               value={textVal}
               onChangeText={setTextVal}
             />
-            <AppButton full variant="solid" size="lg" onPress={handleSend}>
+            <AppButton full variant="solid" size="lg" onPress={handleSend} disabled={isSubmitting} loading={isSubmitting}>
               Send to Partner →
             </AppButton>
           </View>
@@ -769,7 +797,7 @@ export const ThreadScreen: React.FC = () => {
               value={textVal}
               onChangeText={setTextVal}
             />
-            <AppButton full variant="solid" size="lg" onPress={handleSend}>
+            <AppButton full variant="solid" size="lg" onPress={handleSend} disabled={isSubmitting} loading={isSubmitting}>
               Submit Reply →
             </AppButton>
           </View>
@@ -787,7 +815,7 @@ export const ThreadScreen: React.FC = () => {
               value={textVal}
               onChangeText={setTextVal}
             />
-            <AppButton full variant="solid" size="lg" onPress={handleSend}>
+            <AppButton full variant="solid" size="lg" onPress={handleSend} disabled={isSubmitting} loading={isSubmitting}>
               Send →
             </AppButton>
           </View>

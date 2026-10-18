@@ -5,6 +5,11 @@ export const createDate = async (data) => {
   return response.data;
 };
 
+export const suggestDateVenue = async (city, mood, vibe) => {
+  const response = await api.post('/dates/suggest-venue', { city, mood, vibe });
+  return response.data;
+};
+
 export const listDates = async (page = 1, size = 10, status = "", search = "", sort = "") => {
   let url = `/dates/?page=${page}&size=${size}`;
   if (status && status !== 'All') url += `&status=${status}`;

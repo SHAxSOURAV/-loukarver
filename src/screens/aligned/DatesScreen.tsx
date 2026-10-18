@@ -17,7 +17,7 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import { Ionicons } from "@expo/vector-icons";
 import AlignedNav from "@/components/ui/AlignedNav";
 
-import { createDate, listDates, respondToDate, completeDate, addReview, updateReview, updateDate, pingDate, requestCancelDate, cancelDate, requestDeletePhoto, approveDeletePhoto, rejectDeletePhoto, deleteDate } from "../../services/datesApi";
+import { createDate, listDates, respondToDate, completeDate, addReview, updateReview, updateDate, pingDate, requestCancelDate, cancelDate, requestDeletePhoto, approveDeletePhoto, rejectDeletePhoto, deleteDate, suggestDateVenue } from "../../services/datesApi";
 import { getMe } from "../../services/authApi";
 import api from "../../services/api";
 
@@ -88,6 +88,7 @@ export const DatesScreen: React.FC = () => {
 
   const [isSavingMemory, setIsSavingMemory] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
+  const [isCancellingProposal, setIsCancellingProposal] = useState(false);
 
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerInitialIndex, setViewerInitialIndex] = useState(0);
@@ -230,8 +231,25 @@ export const DatesScreen: React.FC = () => {
     }
     setIsGenerating(true);
     try {
+      // 1. Fetch authentic real venue matching city, mood, and vibe
+      let realVenue = "";
+      let dateTitle = "";
+      let dateNote = "";
+      try {
+        const suggestion = await suggestDateVenue(city, mood, vibe);
+        if (suggestion && suggestion.venue) {
+          realVenue = suggestion.location || suggestion.venue;
+          dateTitle = suggestion.title;
+          dateNote = suggestion.note;
+        }
+      } catch (err) {
+        console.log("Failed to fetch venue suggestion, falling back to backend auto-resolver:", err);
+      }
+
       const payload = {
-        where: `Special ${mood.toLowerCase()} ${vibe.toLowerCase()} date in ${city}`,
+        title: dateTitle || undefined,
+        where: realVenue || `${city} Date Venue`,
+        note: dateNote || undefined,
         date: exactDate.toISOString().slice(0, 10).replace(/-/g, '.'),
         time: formatTime(exactTime).replace(" ", ""),
         how_we_meet: meetType,
@@ -324,7 +342,46 @@ export const DatesScreen: React.FC = () => {
         setSheet(null);
         refreshAll();
       }
-    } catch (e) { console.log(e); }
+    } catch (e: any) {
+      console.log("Error responding to date:", e);
+      Alert.alert("Error", e?.response?.data?.detail || "Could not respond to date.");
+    }
+  };
+
+  const handleCancelProposal = () => {
+    if (!selected) return;
+    Alert.alert(
+      "Cancel Date Proposal",
+      "Are you sure you want to cancel this date proposal?",
+      [
+        { text: "Keep Proposal", style: "cancel" },
+        {
+          text: "Yes, Cancel",
+          style: "destructive",
+          onPress: async () => {
+            if (isCancellingProposal) return;
+            setIsCancellingProposal(true);
+            try {
+              await cancelDate(selected.id.toString());
+              setSheet(null);
+              refreshAll();
+            } catch (e: any) {
+              console.log("Error cancelling via cancelDate, trying respondToDate fallback:", e);
+              try {
+                await respondToDate(selected.id.toString(), "reject");
+                setSheet(null);
+                refreshAll();
+              } catch (err2: any) {
+                console.error("Failed to cancel proposal:", err2);
+                Alert.alert("Error", err2?.response?.data?.detail || "Could not cancel date proposal.");
+              }
+            } finally {
+              setIsCancellingProposal(false);
+            }
+          }
+        }
+      ]
+    );
   };
 
   const handleSaveMemory = async () => {
@@ -897,7 +954,14 @@ const TimerDisplay = ({ targetDate }: { targetDate: string }) => {
                       <AppButton variant="outline" size="lg" style={{ flex: 1 }} onPress={() => openReschedule()}>
                         Reschedule
                       </AppButton>
-                      <AppButton variant="outline" size="lg" style={{ flex: 1 }} onPress={() => handleRespond("reject")}>
+                      <AppButton 
+                        variant="outline" 
+                        size="lg" 
+                        style={{ flex: 1 }} 
+                        loading={isCancellingProposal}
+                        disabled={isCancellingProposal}
+                        onPress={handleCancelProposal}
+                      >
                         Cancel
                       </AppButton>
                     </View>
