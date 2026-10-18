@@ -59,8 +59,16 @@ export const ProfessionalVideoPlayer: React.FC<ProfessionalVideoPlayerProps> = (
   const lastTapRef = useRef<number>(0);
   const seekFeedbackTimerRef = useRef<any>(null);
 
+  // Memoized video source with progressive content-type hint for AWS S3 presigned URLs
+  const videoSource = React.useMemo(() => {
+    if (!uri) return null;
+    return typeof uri === 'string'
+      ? { uri, contentType: 'progressive' as const }
+      : uri;
+  }, [uri]);
+
   // Initialize expo-video player
-  const player = useVideoPlayer(uri, (p) => {
+  const player = useVideoPlayer(videoSource, (p) => {
     p.loop = false;
     p.timeUpdateEventInterval = 0.25;
     p.play();
@@ -70,9 +78,19 @@ export const ProfessionalVideoPlayer: React.FC<ProfessionalVideoPlayerProps> = (
   useEffect(() => {
     if (!player) return;
 
-    // Set initial duration if available
+    // Set initial state if player is already ready
     if (player.duration > 0) {
       setDuration(player.duration);
+    }
+    if (player.status === 'readyToPlay') {
+      setIsBuffering(false);
+    } else if (player.status === 'error') {
+      setIsBuffering(false);
+      setHasError(true);
+    }
+    if (player.playing) {
+      setIsPlaying(true);
+      setHasEnded(false);
     }
 
     const subPlaying = player.addListener('playingChange', (event) => {

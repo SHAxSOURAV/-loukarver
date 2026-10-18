@@ -22,14 +22,16 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { ProfessionalVideoPlayer } from '../../components/ui/ProfessionalVideoPlayer';
 
 const isCurrentMediaVideo = (secret: any, uri: string | null): boolean => {
-  return !!(
-    secret?.file_type?.startsWith('video') ||
-    secret?.filename?.endsWith('.mp4') ||
-    secret?.filename?.endsWith('.mov') ||
-    uri?.includes('.mp4') ||
-    uri?.includes('.mov') ||
-    uri?.startsWith('data:video')
-  );
+  if (secret?.is_video === true) return true;
+  if (secret?.file_type?.startsWith('video')) return true;
+  const filename = (secret?.filename || '').toLowerCase();
+  if (filename.endsWith('.mp4') || filename.endsWith('.mov') || filename.endsWith('.webm') || filename.endsWith('.m4v')) return true;
+  if (uri) {
+    const cleanUri = uri.split('?')[0].toLowerCase();
+    if (cleanUri.endsWith('.mp4') || cleanUri.endsWith('.mov') || cleanUri.endsWith('.webm') || cleanUri.endsWith('.m4v')) return true;
+    if (uri.startsWith('data:video')) return true;
+  }
+  return false;
 };
 
 const Confidential: React.FC = () => {
@@ -160,6 +162,21 @@ const Confidential: React.FC = () => {
         startTimer(10000);
       }
     }
+  }, [viewingSecret, mediaDataUri]);
+
+  // Decrypting timeout safety: abort and alert if decrypting takes longer than 15s
+  useEffect(() => {
+    let decryptTimer: any = null;
+    if (viewingSecret && !mediaDataUri) {
+      decryptTimer = setTimeout(() => {
+        setViewingSecret(null);
+        setMediaDataUri(null);
+        CustomAlert.alert("Timeout", "Decrypting secret timed out. Please check your connection and try again.");
+      }, 15000);
+    }
+    return () => {
+      if (decryptTimer) clearTimeout(decryptTimer);
+    };
   }, [viewingSecret, mediaDataUri]);
 
   const handlePause = () => {
@@ -389,33 +406,27 @@ const Confidential: React.FC = () => {
 
   const handleViewSecretIn = async (secret: any) => {
     setViewingSecret(secret);
+    setMediaDataUri(null);
     setIsPaused(false);
 
     try {
-      // 1. Fetch direct remote stream URL & metadata (handles AWS S3 presigned URL or direct local stream)
-      const viewInfo = await getSecretViewInfo(secret.id);
+      const targetId = secret?.id || secret?._id;
+      const viewInfo = await getSecretViewInfo(targetId);
       if (viewInfo?.url) {
+        setViewingSecret((prev: any) => ({ ...prev, ...viewInfo }));
         setMediaDataUri(viewInfo.url);
         return;
       }
-    } catch (apiErr) {
-      console.log("Could not get direct secret view url, trying fallback", apiErr);
-    }
-
-    // Fallback: fetch blob
-    if (!authToken) return;
-    try {
-      const res = await fetch(getSecretViewUrl(secret.id), {
-        headers: { Authorization: `Bearer ${authToken}` }
-      });
-      const blob = await res.blob();
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setMediaDataUri(reader.result as string);
-      };
-      reader.readAsDataURL(blob);
-    } catch (e) {
-      console.log("Failed to load secret media", e);
+      throw new Error("Could not resolve video stream URL.");
+    } catch (apiErr: any) {
+      console.error("Failed to load secret media:", apiErr);
+      const errorMsg = apiErr?.response?.data?.detail || apiErr?.message || "Could not decrypt secret media.";
+      
+      // Close viewer immediately to prevent infinite DECRYPTING spinner
+      setViewingSecret(null);
+      setMediaDataUri(null);
+      CustomAlert.alert("Secret Unavailable", errorMsg);
+      loadSecrets();
     }
   };
 
@@ -559,6 +570,7 @@ const Confidential: React.FC = () => {
         <ProfessionalVideoPlayer
           uri={mediaDataUri}
           isPausedExternal={isPaused}
+          style={{ width: windowWidth, height: windowHeight }}
         />
       );
     }
@@ -630,7 +642,17 @@ const Confidential: React.FC = () => {
                 <AppText variant="serifItalic" color={Colors.cream} style={{ fontSize: 15 }}>
                   {sent.status === 'viewed' ? 'Opened' : 'Delivered'}
                 </AppText>
+                <AppText variant="mono" style={{ color: '#8C7F75', fontSize: 10, marginTop: 2 }}>
+                  {sent.file_type?.startsWith('video') || sent.filename?.endsWith('.mp4') || sent.filename?.endsWith('.mov') ? '🎥 VIDEO' : '📷 PHOTO'}
+                </AppText>
               </View>
+
+              <Pressable 
+                onPress={() => handleViewSecretIn(sent)}
+                style={{ backgroundColor: '#2C221E', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, marginRight: 8 }}
+              >
+                <AppText variant="mono" style={{ color: '#E8B4A0', fontSize: 10 }}>PREVIEW</AppText>
+              </Pressable>
 
               {sent.rewatch_status === 'requested' && (
                 <View style={{ flexDirection: 'row', gap: 6 }}>

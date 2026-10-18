@@ -137,18 +137,32 @@ export const patchScreenshotProtection = async (secretId) => {
   return response.data;
 };
 
-// Returns file URL for the given secret
+// Returns streaming metadata URL for the given secret
 export const getSecretViewUrl = (secretId) => {
-  return `${api.defaults.baseURL}/secret/view/${secretId}`;
+  return `${api.defaults.baseURL}/secret/view-url/${secretId}`;
 };
 
 /**
  * Retrieves the direct viewing URL & metadata for a secret.
  * Resolves full remote URL for streaming video / image.
+ * Resilient against both /view-url and /view routes.
  */
-export const getSecretViewInfo = async (secretId) => {
-  const response = await api.get(`/secret/view-url/${secretId}`);
-  const data = response.data?.data;
+export const getSecretViewInfo = async (secretIdOrObj) => {
+  const secretId = typeof secretIdOrObj === 'object' && secretIdOrObj !== null
+    ? (secretIdOrObj.id || secretIdOrObj._id)
+    : secretIdOrObj;
+
+  if (!secretId) {
+    throw new Error('Invalid secret ID provided to view');
+  }
+
+  let response;
+  try {
+    response = await api.get(`/secret/view-url/${secretId}`);
+  } catch (err) {
+    response = await api.get(`/secret/view/${secretId}`);
+  }
+  const data = response.data?.data || response.data;
   if (data?.url && !data.url.startsWith('http')) {
     let baseUrl = api.defaults.baseURL || process.env.EXPO_PUBLIC_BACKEND_URL || 'https://13-61-230-140.sslip.io';
     if (baseUrl.endsWith('/')) {

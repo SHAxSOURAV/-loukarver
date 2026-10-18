@@ -2,23 +2,35 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, StyleSheet, Pressable, Modal, Image, DeviceEventEmitter, ActivityIndicator, Animated, useWindowDimensions } from 'react-native';
 import { CustomAlert } from '../../components/ui/CustomAlert';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { Colors } from '../../constants/colors';
 import { AppText } from '../../components/ui/AppText';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from 'expo-screen-capture';
-import { getReceivedSecrets, getSecretViewUrl, requestRewatchSecret } from '../../services/secretApi';
+import { getReceivedSecrets, getSecretViewInfo, requestRewatchSecret } from '../../services/secretApi';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import ReAnimated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
+import { ProfessionalVideoPlayer } from '../../components/ui/ProfessionalVideoPlayer';
+
+const isCurrentMediaVideo = (secret: any, uri: string | null): boolean => {
+  if (secret?.is_video === true) return true;
+  if (secret?.file_type?.startsWith('video')) return true;
+  const filename = (secret?.filename || '').toLowerCase();
+  if (filename.endsWith('.mp4') || filename.endsWith('.mov') || filename.endsWith('.webm') || filename.endsWith('.m4v')) return true;
+  if (uri) {
+    const cleanUri = uri.split('?')[0].toLowerCase();
+    if (cleanUri.endsWith('.mp4') || cleanUri.endsWith('.mov') || cleanUri.endsWith('.webm') || cleanUri.endsWith('.m4v')) return true;
+    if (uri.startsWith('data:video')) return true;
+  }
+  return false;
+};
 
 export const SecretHistory: React.FC = () => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const [secrets, setSecrets] = useState<any[]>([]);
   const [viewingSecret, setViewingSecret] = useState<any | null>(null);
   const [mediaDataUri, setMediaDataUri] = useState<string | null>(null);
-  const [authToken, setAuthToken] = useState<string | null>(null);
   const [isPaused, setIsPaused] = useState(false);
 
   const progress = useRef(new Animated.Value(1)).current;
@@ -29,7 +41,7 @@ export const SecretHistory: React.FC = () => {
     viewingSecretRef.current = viewingSecret;
   }, [viewingSecret]);
 
-  // Pinch-to-zoom shared values
+  // Pinch-to-zoom shared values for images
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
@@ -65,27 +77,27 @@ export const SecretHistory: React.FC = () => {
         scale.value = withSpring(1); savedScale.value = 1;
         translateX.value = withSpring(0); translateY.value = withSpring(0);
         savedTranslateX.value = 0; savedTranslateY.value = 0;
-      } else { scale.value = withSpring(2.5); savedScale.value = 2.5; }
+      } else {
+        scale.value = withSpring(2.5); savedScale.value = 2.5;
+      }
     });
 
   const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture, doubleTapGesture);
+
   const animatedImageStyle = useAnimatedStyle(() => ({
     transform: [
+      { scale: scale.value },
       { translateX: translateX.value },
       { translateY: translateY.value },
-      { scale: scale.value },
     ],
   }));
 
+  // Screen capture protection
   useEffect(() => {
-    if (viewingSecret) {
+    if (viewingSecret && viewingSecret.prevent_screenshot) {
       preventScreenCaptureAsync().catch(console.error);
     } else {
       allowScreenCaptureAsync().catch(console.error);
-      progress.stopAnimation();
-      scale.value = 1; savedScale.value = 1;
-      translateX.value = 0; translateY.value = 0;
-      savedTranslateX.value = 0; savedTranslateY.value = 0;
     }
     return () => { allowScreenCaptureAsync().catch(console.error); };
   }, [viewingSecret]);
@@ -97,11 +109,30 @@ export const SecretHistory: React.FC = () => {
     animRef.current.start(({ finished }) => { if (finished) handleViewSecretOut(); });
   };
 
+  // Auto-destruct timer for photos only (10s)
   useEffect(() => {
     if (viewingSecret && mediaDataUri) {
-      progress.setValue(1);
-      startTimer(10000);
+      const isVideo = isCurrentMediaVideo(viewingSecret, mediaDataUri);
+      if (!isVideo) {
+        progress.setValue(1);
+        startTimer(10000);
+      }
     }
+  }, [viewingSecret, mediaDataUri]);
+
+  // Timeout safety: if decrypting takes longer than 15s, abort and alert
+  useEffect(() => {
+    let decryptTimer: any = null;
+    if (viewingSecret && !mediaDataUri) {
+      decryptTimer = setTimeout(() => {
+        setViewingSecret(null);
+        setMediaDataUri(null);
+        CustomAlert.alert("Timeout", "Decrypting secret timed out. Please check your connection and try again.");
+      }, 15000);
+    }
+    return () => {
+      if (decryptTimer) clearTimeout(decryptTimer);
+    };
   }, [viewingSecret, mediaDataUri]);
 
   const handlePause = () => {
@@ -111,7 +142,10 @@ export const SecretHistory: React.FC = () => {
 
   const handleResume = () => {
     setIsPaused(false);
-    progress.stopAnimation((v) => startTimer(v * 10000));
+    const isVideo = isCurrentMediaVideo(viewingSecret, mediaDataUri);
+    if (!isVideo) {
+      progress.stopAnimation((v) => startTimer(v * 10000));
+    }
   };
 
   const loadSecrets = async () => {
@@ -122,11 +156,6 @@ export const SecretHistory: React.FC = () => {
   };
 
   useEffect(() => {
-    const fetchToken = async () => {
-      const token = await AsyncStorage.getItem('access_token');
-      setAuthToken(token);
-    };
-    fetchToken();
     loadSecrets();
     const sub = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', loadSecrets);
     return () => sub.remove();
@@ -134,18 +163,26 @@ export const SecretHistory: React.FC = () => {
 
   const handleViewSecretIn = async (secret: any) => {
     setViewingSecret(secret);
+    setMediaDataUri(null);
     setIsPaused(false);
-    if (!authToken) return;
 
     try {
-      const res = await fetch(getSecretViewUrl(secret.id), {
-        headers: { Authorization: `Bearer ${authToken}` }
-      });
-      const blob = await res.blob();
-      const reader = new FileReader();
-      reader.onloadend = () => { setMediaDataUri(reader.result as string); };
-      reader.readAsDataURL(blob);
-    } catch (e) { console.log("Failed to load secret media", e); }
+      const targetId = secret?.id || secret?._id;
+      const viewInfo = await getSecretViewInfo(targetId);
+      if (viewInfo?.url) {
+        setViewingSecret((prev: any) => ({ ...prev, ...viewInfo }));
+        setMediaDataUri(viewInfo.url);
+        return;
+      }
+      throw new Error("Could not resolve media stream URL.");
+    } catch (apiErr: any) {
+      console.error("Failed to load secret media:", apiErr);
+      const errorMsg = apiErr?.response?.data?.detail || apiErr?.message || "Could not decrypt secret.";
+      setViewingSecret(null);
+      setMediaDataUri(null);
+      CustomAlert.alert("Secret Unavailable", errorMsg);
+      loadSecrets();
+    }
   };
 
   const handleViewSecretOut = () => {
@@ -169,45 +206,48 @@ export const SecretHistory: React.FC = () => {
     }
   };
 
-  const renderSecret = (secret: any) => (
-    <View key={secret.id} style={styles.messageCard}>
-      <View style={styles.messageHeader}>
-        <View style={styles.avatar}>
-          <AppText style={{ color: '#fff', fontSize: 14 }}>
-            {secret.partner_name ? secret.partner_name[0].toUpperCase() : "P"}
-          </AppText>
-        </View>
-        <View>
-          <AppText variant="mono" style={styles.fromText}>
-            FROM {secret.partner_name ? secret.partner_name.toUpperCase() : "PARTNER"}
-          </AppText>
-          <AppText variant="heading" size={17} style={{ color: '#fff' }}>
-            Something just for you
-          </AppText>
-        </View>
-      </View>
-
-      <View style={styles.messageMeta}>
-        <AppText variant="mono" style={{ color: '#8C7F75', fontSize: 12 }}>
-          📷 OPENS ONCE • {secret.delete_after}
-        </AppText>
-        
-        {(!secret.is_viewed || secret.rewatch_status === 'approved') ? (
-          <Pressable onPress={() => handleViewSecretIn(secret)} style={styles.openButton}>
-            <AppText variant="mono" style={{ color: '#fff', fontSize: 10 }}>TAP TO VIEW</AppText>
-          </Pressable>
-        ) : secret.rewatch_status === 'requested' ? (
-          <View style={[styles.openButton, { backgroundColor: '#5c544d' }]}>
-            <AppText variant="mono" style={{ color: '#fff', fontSize: 12 }}>WAITING...</AppText>
+  const renderSecret = (secret: any) => {
+    const isVideo = secret.file_type?.startsWith('video') || secret.filename?.endsWith('.mp4') || secret.filename?.endsWith('.mov');
+    return (
+      <View key={secret.id} style={styles.messageCard}>
+        <View style={styles.messageHeader}>
+          <View style={styles.avatar}>
+            <AppText style={{ color: '#fff', fontSize: 14 }}>
+              {secret.partner_name ? secret.partner_name[0].toUpperCase() : "P"}
+            </AppText>
           </View>
-        ) : (
-          <Pressable onPress={() => handleRequestRewatch(secret.id)} style={[styles.openButton, { backgroundColor: '#8C7F75' }]}>
-            <AppText variant="mono" style={{ color: '#fff', fontSize: 12 }}>ASK TO REWATCH</AppText>
-          </Pressable>
-        )}
+          <View>
+            <AppText variant="mono" style={styles.fromText}>
+              FROM {secret.partner_name ? secret.partner_name.toUpperCase() : "PARTNER"}
+            </AppText>
+            <AppText variant="heading" size={17} style={{ color: '#fff' }}>
+              Something just for you
+            </AppText>
+          </View>
+        </View>
+
+        <View style={styles.messageMeta}>
+          <AppText variant="mono" style={{ color: '#8C7F75', fontSize: 12 }}>
+            {isVideo ? '🎥 VIDEO' : '📷 PHOTO'} • OPENS ONCE • {secret.delete_after}
+          </AppText>
+          
+          {(!secret.is_viewed || secret.rewatch_status === 'approved') ? (
+            <Pressable onPress={() => handleViewSecretIn(secret)} style={styles.openButton}>
+              <AppText variant="mono" style={{ color: '#fff', fontSize: 10 }}>TAP TO VIEW</AppText>
+            </Pressable>
+          ) : secret.rewatch_status === 'requested' ? (
+            <View style={[styles.openButton, { backgroundColor: '#5c544d' }]}>
+              <AppText variant="mono" style={{ color: '#fff', fontSize: 12 }}>WAITING...</AppText>
+            </View>
+          ) : (
+            <Pressable onPress={() => handleRequestRewatch(secret.id)} style={[styles.openButton, { backgroundColor: '#8C7F75' }]}>
+              <AppText variant="mono" style={{ color: '#fff', fontSize: 12 }}>ASK TO REWATCH</AppText>
+            </Pressable>
+          )}
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   const renderMediaViewer = () => {
     if (!mediaDataUri) {
@@ -218,9 +258,21 @@ export const SecretHistory: React.FC = () => {
           </View>
           <AppText variant="mono" style={viewerStyles.loadingText}>DECRYPTING...</AppText>
           <AppText variant="serifItalic" style={viewerStyles.loadingSubtext}>
-            Preparing your secret photo
+            Preparing your secret media
           </AppText>
         </View>
+      );
+    }
+
+    const isVideo = isCurrentMediaVideo(viewingSecret, mediaDataUri);
+
+    if (isVideo) {
+      return (
+        <ProfessionalVideoPlayer
+          uri={mediaDataUri}
+          isPausedExternal={isPaused}
+          style={{ width: windowWidth, height: windowHeight }}
+        />
       );
     }
 
@@ -261,21 +313,25 @@ export const SecretHistory: React.FC = () => {
       <Modal visible={!!viewingSecret} transparent={true} animationType="fade">
         <GestureHandlerRootView style={{ flex: 1 }}>
           <View style={viewerStyles.container}>
-            <LinearGradient colors={['rgba(0,0,0,0.8)', 'transparent']} style={viewerStyles.topGradient} />
+            {!isCurrentMediaVideo(viewingSecret, mediaDataUri) && (
+              <LinearGradient colors={['rgba(0,0,0,0.8)', 'transparent']} style={viewerStyles.topGradient} />
+            )}
 
-            <Pressable onPress={handleViewSecretOut} style={viewerStyles.closeButton}>
+            <Pressable onPress={handleViewSecretOut} style={[viewerStyles.closeButton, { zIndex: 99 }]} hitSlop={15}>
               <View style={viewerStyles.closeButtonInner}>
                 <AppText style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>✕</AppText>
               </View>
             </Pressable>
 
-            <View style={viewerStyles.progressTrack}>
-              <Animated.View style={[viewerStyles.progressBar, { 
-                width: progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] })
-              }]} />
-            </View>
+            {mediaDataUri && !isCurrentMediaVideo(viewingSecret, mediaDataUri) && (
+              <View style={viewerStyles.progressTrack}>
+                <Animated.View style={[viewerStyles.progressBar, { 
+                  width: progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] })
+                }]} />
+              </View>
+            )}
 
-            {mediaDataUri && (
+            {mediaDataUri && !isCurrentMediaVideo(viewingSecret, mediaDataUri) && (
               <View style={viewerStyles.timerLabel}>
                 <AppText variant="mono" style={{ color: 'rgba(255,255,255,0.5)', fontSize: 9 }}>
                   {isPaused ? 'PAUSED' : 'AUTO-DESTRUCT'}
@@ -285,19 +341,21 @@ export const SecretHistory: React.FC = () => {
 
             <View 
               style={{ flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center' }}
-              onStartShouldSetResponder={() => true}
-              onResponderGrant={handlePause}
-              onResponderRelease={handleResume}
-              onResponderTerminate={handleResume}
+              onStartShouldSetResponder={() => !isCurrentMediaVideo(viewingSecret, mediaDataUri)}
+              onResponderGrant={!isCurrentMediaVideo(viewingSecret, mediaDataUri) ? handlePause : undefined}
+              onResponderRelease={!isCurrentMediaVideo(viewingSecret, mediaDataUri) ? handleResume : undefined}
+              onResponderTerminate={!isCurrentMediaVideo(viewingSecret, mediaDataUri) ? handleResume : undefined}
             >
               {renderMediaViewer()}
             </View>
 
-            <LinearGradient colors={['transparent', 'rgba(0,0,0,0.6)']} style={viewerStyles.bottomGradient} />
+            {!isCurrentMediaVideo(viewingSecret, mediaDataUri) && (
+              <LinearGradient colors={['transparent', 'rgba(0,0,0,0.6)']} style={viewerStyles.bottomGradient} />
+            )}
 
-            {mediaDataUri && (
+            {mediaDataUri && !isCurrentMediaVideo(viewingSecret, mediaDataUri) && (
               <View style={viewerStyles.bottomHint}>
-                <AppText variant="mono" style={{ color: 'rgba(255,255,255,0.35)', fontSize: 9 }}>
+                <AppText variant="mono" style={{ color: 'rgba(255,255,235,0.35)', fontSize: 9 }}>
                   HOLD TO PAUSE • PINCH TO ZOOM • DOUBLE TAP TO 2.5×
                 </AppText>
               </View>
