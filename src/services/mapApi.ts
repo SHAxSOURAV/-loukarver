@@ -8,6 +8,8 @@ export interface PlaceCreatePayload {
   description?: string;
   visit_date?: string; // mm.dd.yyyy
   timezone: string;
+  lat?: number;
+  lng?: number;
 }
 
 export interface PlaceUpdatePayload {

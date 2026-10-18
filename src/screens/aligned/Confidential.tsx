@@ -168,7 +168,7 @@ const Confidential: React.FC = () => {
     }
   }, [viewingSecret, mediaDataUri]);
 
-  // Decrypting timeout safety: abort and alert if decrypting takes longer than 15s
+  // Decrypting timeout safety: abort and alert if decrypting takes longer than 30s
   useEffect(() => {
     let decryptTimer: any = null;
     if (viewingSecret && !mediaDataUri) {
@@ -176,7 +176,7 @@ const Confidential: React.FC = () => {
         setViewingSecret(null);
         setMediaDataUri(null);
         CustomAlert.alert("Timeout", "Decrypting secret timed out. Please check your connection and try again.");
-      }, 15000);
+      }, 30000);
     }
     return () => {
       if (decryptTimer) clearTimeout(decryptTimer);
@@ -411,7 +411,7 @@ const Confidential: React.FC = () => {
   const handleViewSecretIn = async (secret: any) => {
     setViewingSecret(secret);
     setMediaDataUri(null);
-    setDownloadProgress(0);
+    setDownloadProgress(null);
     setIsPaused(false);
 
     try {
@@ -422,46 +422,6 @@ const Confidential: React.FC = () => {
       }
 
       setViewingSecret((prev: any) => ({ ...prev, ...viewInfo }));
-
-      const isVideo = isCurrentMediaVideo(viewInfo, viewInfo.url);
-
-      // Fast sequential caching for native mobile:
-      // Eliminates 200ms round-trip Range request latency across continents (Stockholm -> Bangladesh)
-      // Downloads 16.5MB sequentially in ~3-4 seconds with 0% buffering during playback
-      if (isVideo && Platform.OS !== 'web' && viewInfo.url.startsWith('http')) {
-        const localExt = (viewInfo.filename || '').toLowerCase().endsWith('.mov') ? '.mov' : '.mp4';
-        const localFileUri = `${FileSystem.cacheDirectory}secret_stream_${targetId}${localExt}`;
-
-        try {
-          const fileInfo = await FileSystem.getInfoAsync(localFileUri);
-          if (fileInfo.exists && fileInfo.size > 0) {
-            setMediaDataUri(localFileUri);
-            setDownloadProgress(null);
-            return;
-          }
-        } catch (e) {}
-
-        const downloadResumable = FileSystem.createDownloadResumable(
-          viewInfo.url,
-          localFileUri,
-          {},
-          (progress) => {
-            if (progress.totalBytesExpectedToWrite > 0) {
-              const pct = Math.min(100, Math.round((progress.totalBytesWritten / progress.totalBytesExpectedToWrite) * 100));
-              setDownloadProgress(pct);
-            }
-          }
-        );
-
-        const result = await downloadResumable.downloadAsync();
-        if (result?.uri) {
-          setMediaDataUri(result.uri);
-          setDownloadProgress(null);
-          return;
-        }
-      }
-
-      // Direct URL fallback (photos or web)
       setMediaDataUri(viewInfo.url);
       setDownloadProgress(null);
     } catch (apiErr: any) {
@@ -587,20 +547,25 @@ const Confidential: React.FC = () => {
       </View>
 
       <View style={styles.messageMeta}>
-        <AppText variant="mono" style={{ color: '#8C7F75', fontSize: 12 }}>
-          {secret.file_type?.startsWith('video') || secret.filename?.endsWith('.mp4') || secret.filename?.endsWith('.mov') ? '🎥 VIDEO' : '📷 PHOTO'} • OPENS ONCE • {secret.delete_after}
-        </AppText>
+        <View style={styles.metaTextContainer}>
+          <AppText variant="mono" style={styles.metaMainText} numberOfLines={1}>
+            {secret.file_type?.startsWith('video') || secret.filename?.endsWith('.mp4') || secret.filename?.endsWith('.mov') ? '🎥 VIDEO' : '📷 PHOTO'} • OPENS ONCE
+          </AppText>
+          <AppText variant="mono" style={styles.metaSubText} numberOfLines={1}>
+            ⏳ {secret.delete_after}
+          </AppText>
+        </View>
         
         {(!secret.is_viewed || secret.rewatch_status === 'approved') ? (
           <Pressable
             onPress={() => handleViewSecretIn(secret)}
             style={styles.openButton}
           >
-            <AppText variant="mono" style={{ color: '#fff', fontSize: 10 }}>TAP TO VIEW</AppText>
+            <AppText variant="mono" style={styles.openButtonText}>TAP TO VIEW</AppText>
           </Pressable>
         ) : secret.rewatch_status === "requested" ? (
           <View style={[styles.openButton, { backgroundColor: '#5c544d' }]}>
-            <AppText variant="mono" style={{ color: '#fff', fontSize: 12 }}>
+            <AppText variant="mono" style={styles.openButtonText}>
               WAITING...
             </AppText>
           </View>
@@ -610,7 +575,7 @@ const Confidential: React.FC = () => {
             disabled={requestingSecretId === secret.id}
             style={[styles.openButton, { backgroundColor: '#8C7F75', opacity: requestingSecretId === secret.id ? 0.7 : 1 }]}
           >
-            <AppText variant="mono" style={{ color: '#fff', fontSize: 12 }}>
+            <AppText variant="mono" style={styles.openButtonText}>
               {requestingSecretId === secret.id ? "REQUESTING..." : "ASK TO REWATCH"}
             </AppText>
           </Pressable>
@@ -621,17 +586,16 @@ const Confidential: React.FC = () => {
 
   const renderMediaViewer = () => {
     if (!mediaDataUri) {
-      const isPreparingStream = downloadProgress !== null && downloadProgress > 0;
       return (
         <View style={viewerStyles.loadingContainer}>
           <View style={viewerStyles.loadingPulse}>
             <ActivityIndicator size="large" color="#E06C6C" />
           </View>
           <AppText variant="mono" style={viewerStyles.loadingText}>
-            {isPreparingStream ? `DECRYPTING ${downloadProgress}%` : 'DECRYPTING...'}
+            DECRYPTING...
           </AppText>
           <AppText variant="serifItalic" style={viewerStyles.loadingSubtext}>
-            {isPreparingStream ? 'Optimizing high-speed secure stream' : 'Preparing your secret media'}
+            Preparing your secret media
           </AppText>
         </View>
       );
@@ -1024,11 +988,13 @@ export default Confidential;
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    marginHorizontal: -20,
     backgroundColor: "#1D1815",
     padding: 20,
-    marginVertical: 20,
+    borderRadius: 16,
+    marginVertical: 12,
+    borderWidth: 1,
+    borderColor: "#2E221E",
+    overflow: "hidden",
   },
   header: {
     flexDirection: "row",
@@ -1041,8 +1007,10 @@ const styles = StyleSheet.create({
   messageCard: {
     backgroundColor: '#2D1D1A',
     borderRadius: 16,
-    padding: 10,
-    marginBottom: 24,
+    padding: 14,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#3D2824',
   },
   messageHeader: {
     flexDirection: 'row',
@@ -1067,12 +1035,37 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 12,
+  },
+  metaTextContainer: {
+    flex: 1,
+    marginRight: 8,
+  },
+  metaMainText: {
+    color: '#A8998D',
+    fontSize: 11,
+    letterSpacing: 0.5,
+  },
+  metaSubText: {
+    color: '#8C7F75',
+    fontSize: 10,
+    marginTop: 3,
+    letterSpacing: 0.5,
   },
   openButton: {
     backgroundColor: '#B7553E',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 105,
+  },
+  openButtonText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   composeSection: {
     marginTop: 8,

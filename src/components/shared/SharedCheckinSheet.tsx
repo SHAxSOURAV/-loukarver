@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { View, StyleSheet, Pressable } from "react-native";
 import { useFocusEffect } from '@react-navigation/native';
 import { Colors } from "../../constants/colors";
@@ -22,6 +22,7 @@ export const SharedCheckinSheet: React.FC<SharedCheckinSheetProps> = ({ open, on
   const [userName, setUserName] = useState("YOU");
   const [partnerName, setPartnerName] = useState("PARTNER");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
   const [hasCheckedInToday, setHasCheckedInToday] = useState(false);
   const [checkinQ1, setCheckinQ1] = useState("");
   const [checkinQ2, setCheckinQ2] = useState("");
@@ -81,7 +82,10 @@ export const SharedCheckinSheet: React.FC<SharedCheckinSheetProps> = ({ open, on
   }, [loadData]);
 
   const handleCheckinSubmit = async () => {
-    if (!checkinQ1.trim() || !checkinQ2.trim() || !checkinQ3.trim() || isSubmitting) return;
+    if (isSubmittingRef.current || isSubmitting) return;
+    if (!checkinQ1.trim() || !checkinQ2.trim() || !checkinQ3.trim()) return;
+
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     try {
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -134,6 +138,7 @@ export const SharedCheckinSheet: React.FC<SharedCheckinSheetProps> = ({ open, on
     } catch (e) {
       console.log("Error submitting checkin:", e);
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -240,6 +245,7 @@ export const SharedCheckinSheet: React.FC<SharedCheckinSheetProps> = ({ open, on
         style={{ marginTop: 24 }}
         onPress={handleCheckinSubmit}
         disabled={isSubmitting || !checkinQ1.trim() || !checkinQ2.trim() || !checkinQ3.trim()}
+        loading={isSubmitting}
       >
         {isSubmitting ? (hasCheckedInToday ? "Updating..." : "Submitting...") : (hasCheckedInToday ? "Update →" : "Submit →")}
       </AppButton>

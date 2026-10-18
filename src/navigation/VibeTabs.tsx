@@ -121,8 +121,8 @@ const styles = StyleSheet.create({
     width: 24, height: 2,
     backgroundColor: Colors.accent, borderRadius: 1,
   },
-  mark: { fontSize: 15, lineHeight: 20 },
-  label: { fontFamily: Fonts.mono, fontSize: 9, letterSpacing: 1, marginTop: 2 },
+  mark: { fontSize: 18, lineHeight: 22 },
+  label: { fontFamily: Fonts.mono, fontSize: 9.5, fontWeight: '600', letterSpacing: 0.8, marginTop: 2 },
   badge: {
     position: 'absolute',
     top: -8,

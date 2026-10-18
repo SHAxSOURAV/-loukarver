@@ -1,13 +1,14 @@
 import { SafeAreaView } from 'react-native-safe-area-context';
-import React, { useState, useEffect } from "react";
-import { View, ScrollView, StyleSheet, Pressable, ActivityIndicator, RefreshControl, Image, Platform } from 'react-native';
+import React, { useState, useEffect, useRef } from "react";
+import { View, ScrollView, StyleSheet, Pressable, ActivityIndicator, RefreshControl, Image, Platform, TextInput, Keyboard } from 'react-native';
+import axios from 'axios';
 import { Colors } from "../../constants/colors";
 import { AppText } from "../../components/ui/AppText";
 import { AppButton } from "../../components/ui/AppButton";
 import { Tag } from "../../components/ui/Tag";
 import { BottomSheet } from "../../components/ui/BottomSheet";
 import { PinCard } from "../../components/map/PinCard";
-import { WorldMapSvg } from "../../components/map/WorldMapSvg";
+import { InteractiveLeafletMap } from "../../components/map/InteractiveLeafletMap";
 import { MapPin, PinType } from "../../types";
 import { AppTextInput } from "@/components/ui/AppTextInput";
 import AlignedNav from "@/components/ui/AlignedNav";
@@ -22,6 +23,7 @@ import { CustomAlert } from "../../components/ui/CustomAlert";
 import * as FileSystem from "expo-file-system";
 import * as MediaLibrary from "expo-media-library";
 import { Modal, useWindowDimensions } from "react-native";
+import * as Location from 'expo-location';
 
 interface UIMapPin extends MapPin {
   creator_name?: string;
@@ -41,12 +43,36 @@ const PIN_META = {
   bucket: { label: "Bucket", color: Colors.light },
 };
 
+const PIN_COLORS: Record<string, string> = {
+  home: '#8B7355',
+  together: '#C05640',
+  upcoming: '#6E8B74',
+  bucket: '#A89E8D',
+};
+
 const categoryOptions = [
   { label: "Home", value: "home" as PinType },
   { label: "Together", value: "together" as PinType },
   { label: "Upcoming", value: "upcoming" as PinType },
   { label: "Bucket", value: "bucket" as PinType },
 ] as const;
+
+function parseDateString(str: string): Date | null {
+  if (!str) return null;
+  if (str.includes('.')) {
+    const parts = str.split('.');
+    if (parts.length === 3) {
+      const month = parseInt(parts[0], 10) - 1;
+      const day = parseInt(parts[1], 10);
+      const year = parseInt(parts[2], 10);
+      if (!isNaN(month) && !isNaN(day) && !isNaN(year)) {
+        return new Date(year, month, day);
+      }
+    }
+  }
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
+}
 
 export const MapScreen: React.FC = () => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -68,15 +94,64 @@ export const MapScreen: React.FC = () => {
   const [sheet, setSheet] = useState<string | null>(null);
   const [meetType, setMeetType] = useState<PinType>("together");
 
+  // Super-Fast Map Search State
+  const [mapSearchQuery, setMapSearchQuery] = useState("");
+  const [mapSearchResults, setMapSearchResults] = useState<Array<{
+    id?: string;
+    title: string;
+    subtitle: string;
+    city: string;
+    country: string;
+    lat: number;
+    lng: number;
+    isSaved: boolean;
+    savedPin?: UIMapPin;
+  }>>([]);
+  const [isSearchingMap, setIsSearchingMap] = useState(false);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [searchedLocation, setSearchedLocation] = useState<{
+    city: string;
+    country: string;
+    lat: number;
+    lng: number;
+  } | null>(null);
+  const mapSearchTimerRef = useRef<any>(null);
+
+  // Live Location & Compass State
+  const [userLiveLocation, setUserLiveLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
+  const [compassTrigger, setCompassTrigger] = useState(0);
+
   // User Identification
   const [currentUserId, setCurrentUserId] = useState<string>("");
+
+  // Loading states
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   // New place inputs
   const [newCity, setNewCity] = useState("");
   const [newCountry, setNewCountry] = useState("");
   const [newNote, setNewNote] = useState("");
+  const [newPlaceCoords, setNewPlaceCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [isReverseGeocoding, setIsReverseGeocoding] = useState(false);
+  const [clearTempPinTrigger, setClearTempPinTrigger] = useState(0);
   const [visitDateObj, setVisitDateObj] = useState<Date>(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
+
+  // Autocomplete suggestions
+  const [suggestions, setSuggestions] = useState<Array<{ place_name: string; city: string; country: string; lat: number; lng: number }>>([]);
+  const [isSearchingCity, setIsSearchingCity] = useState(false);
+  const searchTimerRef = useRef<any>(null);
+
+  // Edit place inputs
+  const [editCity, setEditCity] = useState("");
+  const [editCountry, setEditCountry] = useState("");
+  const [editNote, setEditNote] = useState("");
+  const [editCategory, setEditCategory] = useState<PinType>("together");
+  const [editDateObj, setEditDateObj] = useState<Date>(new Date());
+  const [showEditDatePicker, setShowEditDatePicker] = useState(false);
 
   // New moment inputs
   const [momentType, setMomentType] = useState<'Note' | 'Photo'>('Note');
@@ -88,6 +163,7 @@ export const MapScreen: React.FC = () => {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
   const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://localhost:8002';
+  const maptilerApiKey = process.env.EXPO_PUBLIC_MAPTILER_API_KEY || '';
 
   const mapBackendPlaceToPin = (p: any): UIMapPin => ({
     id: p.id,
@@ -153,12 +229,294 @@ export const MapScreen: React.FC = () => {
     return `${month}.${day}.${year}`;
   };
 
+  // Super-Fast Live Map Search Handler
+  const handleMapSearchChange = (text: string) => {
+    setMapSearchQuery(text);
+    if (mapSearchTimerRef.current) clearTimeout(mapSearchTimerRef.current);
+
+    if (!text.trim()) {
+      setMapSearchResults([]);
+      setIsSearchingMap(false);
+      return;
+    }
+
+    const q = text.trim().toLowerCase();
+
+    // 1. Instant (<1ms) search in couple's saved places
+    const localMatches = places.filter(p =>
+      p.city.toLowerCase().includes(q) ||
+      p.country.toLowerCase().includes(q) ||
+      (p.note && p.note.toLowerCase().includes(q))
+    ).slice(0, 3).map(p => ({
+      id: String(p.id),
+      title: p.city,
+      subtitle: `${p.country} · Saved (${PIN_META[p.type]?.label || p.type})`,
+      city: p.city,
+      country: p.country,
+      lat: p.lat,
+      lng: p.lng,
+      isSaved: true,
+      savedPin: p,
+    }));
+
+    setMapSearchResults(localMatches);
+
+    if (text.trim().length < 2) return;
+
+    // 2. High-speed (180ms debounce) MapTiler worldwide geocoding
+    mapSearchTimerRef.current = setTimeout(async () => {
+      try {
+        setIsSearchingMap(true);
+        const res = await axios.get(
+          `https://api.maptiler.com/geocoding/${encodeURIComponent(text.trim())}.json`,
+          {
+            params: {
+              key: maptilerApiKey,
+              limit: 5,
+              types: 'municipality,place,region,country'
+            },
+            timeout: 3000
+          }
+        );
+
+        if (res.data?.features) {
+          const remoteResults = res.data.features.map((f: any) => {
+            const coords = f.geometry?.coordinates || [0, 0];
+            let ctry = '';
+            if (f.context) {
+              const cItem = f.context.find((c: any) => c.id?.startsWith('country'));
+              if (cItem) ctry = cItem.text || '';
+            }
+            const mainText = f.text || f.place_name?.split(',')[0] || '';
+            return {
+              id: f.id,
+              title: mainText,
+              subtitle: f.place_name || ctry,
+              city: mainText,
+              country: ctry || mainText,
+              lat: coords[1],
+              lng: coords[0],
+              isSaved: false,
+            };
+          });
+
+          // Combine saved places + worldwide results without duplicates
+          const combined = [...localMatches];
+          remoteResults.forEach((r: any) => {
+            if (!combined.some(c => c.city.toLowerCase() === r.city.toLowerCase())) {
+              combined.push(r);
+            }
+          });
+          setMapSearchResults(combined);
+        }
+      } catch (err) {
+        // Silently catch geocode errors
+      } finally {
+        setIsSearchingMap(false);
+      }
+    }, 180);
+  };
+
+  const handleSelectSearchResult = (item: any) => {
+    Keyboard.dismiss();
+    setIsSearchFocused(false);
+    setMapSearchQuery(item.title);
+    setMapSearchResults([]);
+
+    if (item.isSaved && item.savedPin) {
+      setSelected(item.savedPin);
+      setSheet("detail");
+      setSearchedLocation(null);
+    } else {
+      setSearchedLocation({
+        city: item.city,
+        country: item.country,
+        lat: item.lat,
+        lng: item.lng,
+      });
+    }
+  };
+
+  // Live GPS Location Handler
+  const handleGetLiveLocation = async () => {
+    if (isLocating) return;
+    setIsLocating(true);
+    try {
+      let perm = await Location.getForegroundPermissionsAsync();
+      let status = perm.status;
+      if (status !== 'granted') {
+        if (perm.canAskAgain) {
+          const req = await Location.requestForegroundPermissionsAsync();
+          status = req.status;
+        }
+      }
+      if (status !== 'granted') {
+        CustomAlert.alert("Permission Required", "Please allow location access to view your live location on the map.");
+        setIsLocating(false);
+        return;
+      }
+
+      // 1. Instant check with last known location for super-fast feedback
+      const lastKnown = await Location.getLastKnownPositionAsync().catch(() => null);
+      if (lastKnown?.coords) {
+        setUserLiveLocation({
+          lat: lastKnown.coords.latitude,
+          lng: lastKnown.coords.longitude,
+        });
+      }
+
+      // 2. Fetch fresh high-accuracy position with safe 6s timeout
+      const fresh = await Promise.race([
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000)),
+      ]);
+
+      if (fresh?.coords) {
+        setUserLiveLocation({
+          lat: fresh.coords.latitude,
+          lng: fresh.coords.longitude,
+        });
+      }
+    } catch (err) {
+      console.log("Error getting live location:", err);
+      CustomAlert.alert("Location Error", "Could not fetch current location. Please check your GPS settings.");
+    } finally {
+      setIsLocating(false);
+    }
+  };
+
+  // Compass Reset Handler
+  const handleResetCompass = () => {
+    setCompassTrigger(prev => prev + 1);
+  };
+
+  // City Search / Autocomplete
+  const handleCityQueryChange = (text: string) => {
+    setNewCity(text);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (!text.trim() || text.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        setIsSearchingCity(true);
+        const res = await axios.get(
+          `https://api.maptiler.com/geocoding/${encodeURIComponent(text.trim())}.json`,
+          { params: { key: maptilerApiKey, limit: 4, types: 'municipality,place,country' }, timeout: 3000 }
+        );
+        if (res.data?.features) {
+          const mapped = res.data.features.map((f: any) => {
+            const coords = f.geometry?.coordinates || [0, 0];
+            let ctry = '';
+            if (f.context) {
+              const cItem = f.context.find((c: any) => c.id?.startsWith('country'));
+              if (cItem) ctry = cItem.text || '';
+            }
+            return {
+              place_name: f.place_name || f.text,
+              city: f.text || '',
+              country: ctry,
+              lat: coords[1],
+              lng: coords[0]
+            };
+          });
+          setSuggestions(mapped);
+        }
+      } catch (e) {
+        // Silently ignore autocomplete errors
+      } finally {
+        setIsSearchingCity(false);
+      }
+    }, 250);
+  };
+
+  // Long-press on Map -> Auto-reverse geocode and open modal
+  const handleMapLongPress = async ({ lat, lng }: { lat: number; lng: number }) => {
+    setNewPlaceCoords({ lat, lng });
+    setNewCity("Detecting location...");
+    setNewCountry("Detecting...");
+    setIsReverseGeocoding(true);
+    setSuggestions([]);
+    setSheet("new");
+
+    try {
+      let detectedCity = "";
+      let detectedCountry = "";
+
+      // 1. Primary: MapTiler Reverse Geocoding
+      if (maptilerApiKey) {
+        try {
+          const res = await axios.get(
+            `https://api.maptiler.com/geocoding/${lng},${lat}.json`,
+            { params: { key: maptilerApiKey, limit: 5 }, timeout: 4000 }
+          );
+          const features = res.data?.features || [];
+          if (features.length > 0) {
+            const cityFeature = features.find((f: any) =>
+              f.place_type?.some((t: string) => ['municipality', 'place', 'locality', 'subregion', 'city', 'town'].includes(t))
+            ) || features[0];
+
+            detectedCity = cityFeature.text || cityFeature.place_name?.split(',')[0] || '';
+
+            if (cityFeature.context) {
+              const cItem = cityFeature.context.find((c: any) => c.id?.startsWith('country'));
+              if (cItem) detectedCountry = cItem.text || '';
+            }
+            if (!detectedCountry) {
+              const countryFeature = features.find((f: any) => f.place_type?.includes('country'));
+              if (countryFeature) detectedCountry = countryFeature.text || '';
+            }
+          }
+        } catch (e) {
+          console.log("MapTiler reverse geocode error:", e);
+        }
+      }
+
+      // 2. Fallback: OpenStreetMap Nominatim Reverse Geocoding
+      if (!detectedCity || !detectedCountry) {
+        try {
+          const res = await axios.get(
+            `https://nominatim.openstreetmap.org/reverse`,
+            {
+              params: { lat, lon: lng, format: 'json', zoom: 10 },
+              headers: { 'User-Agent': 'AlignedTracker/1.0' },
+              timeout: 3500
+            }
+          );
+          if (res.data?.address) {
+            const addr = res.data.address;
+            if (!detectedCity) {
+              detectedCity = addr.city || addr.town || addr.village || addr.municipality || addr.county || addr.state || '';
+            }
+            if (!detectedCountry) {
+              detectedCountry = addr.country || '';
+            }
+          }
+        } catch (e) {
+          console.log("Nominatim reverse geocode error:", e);
+        }
+      }
+
+      setNewCity(detectedCity || `Pin (${lat.toFixed(2)}°, ${lng.toFixed(2)}°)`);
+      setNewCountry(detectedCountry || '');
+    } catch (err) {
+      console.log("Error in reverse geocoding:", err);
+      setNewCity(`Pin (${lat.toFixed(2)}°, ${lng.toFixed(2)}°)`);
+      setNewCountry("");
+    } finally {
+      setIsReverseGeocoding(false);
+    }
+  };
+
   const handleCreatePlace = async () => {
     if (!newCity.trim() || !newCountry.trim()) {
       CustomAlert.alert("Input required", "Please enter both City and Country.");
       return;
     }
 
+    setIsSubmitting(true);
     try {
       const categoryPayload = (meetType.charAt(0).toUpperCase() + meetType.slice(1)) as any;
       const formattedDate = (meetType === 'together' || meetType === 'upcoming')
@@ -166,12 +524,14 @@ export const MapScreen: React.FC = () => {
         : undefined;
 
       await createPlace({
-        city: newCity,
-        country: newCountry,
+        city: newCity.trim(),
+        country: newCountry.trim(),
         category: categoryPayload,
-        description: newNote,
+        description: newNote.trim(),
         visit_date: formattedDate,
         timezone: 'Asia/Dhaka',
+        lat: newPlaceCoords?.lat,
+        lng: newPlaceCoords?.lng,
       });
       triggerNotification("Map Create", `Added ${newCity} to the map`).catch(() => {});
 
@@ -179,12 +539,69 @@ export const MapScreen: React.FC = () => {
       setNewCity("");
       setNewCountry("");
       setNewNote("");
+      setNewPlaceCoords(null);
+      setSuggestions([]);
       setVisitDateObj(new Date());
       setSheet(null);
+      setClearTempPinTrigger(prev => prev + 1);
       loadMapData(false);
     } catch (err: any) {
       console.error("Error creating place:", err);
-      CustomAlert.alert("Error", "Failed to add place to map.");
+      const errMsg = err?.response?.data?.detail || err?.message || "Failed to add place to map.";
+      CustomAlert.alert("Error", errMsg);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleOpenEditPlace = (place: UIMapPin) => {
+    setEditCity(place.city);
+    setEditCountry(place.country);
+    setEditNote(place.note || '');
+    setEditCategory(place.type);
+    if (place.dates) {
+      const parsed = parseDateString(place.dates);
+      if (parsed) setEditDateObj(parsed);
+    }
+    setSheet('edit');
+  };
+
+  const handleSaveEditPlace = async () => {
+    if (!selected) return;
+    if (!editCity.trim() || !editCountry.trim()) {
+      CustomAlert.alert("Input required", "Please enter both City and Country.");
+      return;
+    }
+
+    setIsSavingEdit(true);
+    try {
+      const categoryPayload = (editCategory.charAt(0).toUpperCase() + editCategory.slice(1)) as any;
+      const formattedDate = (editCategory === 'together' || editCategory === 'upcoming')
+        ? formatDateForPayload(editDateObj)
+        : undefined;
+
+      const updated = await updatePlace(selected.id.toString(), {
+        city: editCity.trim(),
+        country: editCountry.trim(),
+        category: categoryPayload,
+        description: editNote.trim(),
+        visit_date: formattedDate,
+        timezone: 'Asia/Dhaka'
+      });
+
+      if (updated) {
+        const mapped = mapBackendPlaceToPin(updated);
+        setSelected(mapped);
+        setSheet('detail');
+        loadMapData(false);
+        CustomAlert.alert("Updated", "Place details updated successfully.");
+      }
+    } catch (err: any) {
+      console.error("Error updating place:", err);
+      const errMsg = err?.response?.data?.detail || err?.message || "Failed to update place.";
+      CustomAlert.alert("Error", errMsg);
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
@@ -208,20 +625,32 @@ export const MapScreen: React.FC = () => {
   const handleDeletePlace = async (placeId: string) => {
     if (!selected) return;
 
-    // Check if partner has contributed any memory notes/photos to this place
+    let uid = currentUserId;
+    if (!uid) {
+      try {
+        const profile = await getUserProfile();
+        if (profile?.data) {
+          uid = profile.data.id || profile.data._id || "";
+          setCurrentUserId(uid);
+        }
+      } catch (e) {}
+    }
+
+    // Check if partner has contributed any memories (creator_id !== uid)
     const hasPartnerContribution = selected.moments && selected.moments.some(
-      (m: any) => m.creator_id && currentUserId && m.creator_id !== currentUserId
+      (m: any) => m.creator_id && uid && m.creator_id !== uid
     );
 
     if (hasPartnerContribution) {
       CustomAlert.alert(
         "Removal Approval Needed",
-        "Your partner has contributed memory notes or photos to this place. Removing it requires their confirmation. Send an approval request?",
+        "Your partner has contributed memories to this place. Removing it requires their confirmation. Send an approval request?",
         [
           { text: "Cancel", style: "cancel" },
           {
             text: "Send Request",
             onPress: async () => {
+              setIsDeleting(true);
               try {
                 await requestDeletePlace(placeId);
                 CustomAlert.alert(
@@ -234,30 +663,37 @@ export const MapScreen: React.FC = () => {
               } catch (err: any) {
                 console.error("Error requesting deletion:", err);
                 CustomAlert.alert("Error", "Failed to send request.");
+              } finally {
+                setIsDeleting(false);
               }
             }
           }
         ]
       );
     } else {
+      // Direct Instant Delete for Mistakes / Solo creations
       CustomAlert.alert(
         "Remove Place",
-        `Are you sure you want to remove ${selected.city} from your map? This will delete all saved memories.`,
+        `Are you sure you want to remove ${selected.city} from your map?`,
         [
           { text: "Cancel", style: "cancel" },
           {
             text: "Remove",
             style: "destructive",
             onPress: async () => {
+              setIsDeleting(true);
               try {
                 await deletePlace(placeId);
                 triggerNotification("Map Delete", `Removed ${selected.city} from the map`).catch(() => {});
                 setSheet(null);
                 setSelected(null);
                 loadMapData(false);
+                CustomAlert.alert("Removed", `${selected.city} was removed from your map.`);
               } catch (err: any) {
                 console.error("Error deleting place:", err);
                 CustomAlert.alert("Error", "Failed to delete place.");
+              } finally {
+                setIsDeleting(false);
               }
             }
           }
@@ -394,122 +830,337 @@ export const MapScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={['top']}>
       <AlignedNav />
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={Colors.accent} />
         </View>
       ) : (
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => {
-                setRefreshing(true);
-                loadMapData(false);
-              }}
-              tintColor={Colors.accent}
-            />
-          }
-        >
-          <View style={styles.inner}>
-            <AppText
-              variant="display"
-              size={42}
-              style={{ lineHeight: 42, marginBottom: 6 }}
-            >
-              Map
-              <AppText size={42} color={Colors.accent}>
-                .
-              </AppText>
-            </AppText>
-            <AppText
-              variant="serifItalic"
-              size={16}
-              color={Colors.muted}
-              style={{ lineHeight: 24, marginBottom: 20 }}
-            >
-              Places been, places dreamt — and the line between you.
-            </AppText>
+        <View style={styles.mapViewport}>
+          {/* Real Fullscreen Leaflet Map */}
+          <InteractiveLeafletMap
+            places={places}
+            routes={routes}
+            selectedPin={selected}
+            onSelectPin={(pin) => {
+              setSelected(pin);
+              setSheet("detail");
+            }}
+            onMapLongPress={handleMapLongPress}
+            clearTempPinTrigger={clearTempPinTrigger}
+            activeFilter={filter}
+            focusLocation={searchedLocation}
+            userLocation={userLiveLocation}
+            resetCompassTrigger={compassTrigger}
+            style={{ flex: 1 }}
+          />
 
-            {/* Stats */}
-            <View style={styles.statsRow}>
-              {[
-                { n: uiStats.countries, l: "Countries" },
-                { n: uiStats.cities, l: "Cities" },
-                { n: uiStats.together, l: "Together" },
-                { n: uiStats.bucket, l: "Bucket" },
-              ].map((s, i) => (
-                <View
-                  key={i}
-                  style={[styles.statBlock, i < 3 && styles.statBorder]}
-                >
-                  <AppText
-                    variant="serifItalic"
-                    size={28}
-                    color={Colors.ink}
-                    style={{ lineHeight: 28 }}
-                  >
-                    {s.n}
+          {/* FLOATING TOP HEADER & STATS CARD */}
+          <View style={styles.floatingHeaderCard}>
+            {/* Row 1: Header, Place Count, Compact Search Box & Refresh */}
+            <View style={styles.headerTopRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+                <AppText variant="display" size={24} style={{ lineHeight: 26 }}>
+                  Map
+                  <AppText size={24} color={Colors.accent}>
+                    .
                   </AppText>
-                  <AppText
-                    variant="smallCaps"
-                    color={Colors.muted}
-                    style={{ marginTop: 4, fontSize: 10 }}
-                  >
-                    {s.l}
+                </AppText>
+                <View style={styles.placeBadge}>
+                  <AppText variant="mono" size={9} color={Colors.ink2}>
+                    {filtered.length} {filtered.length === 1 ? 'place' : 'places'}
                   </AppText>
                 </View>
-              ))}
+              </View>
+
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginLeft: 8, gap: 6 }}>
+                {/* Compact Search Box replacing the top Add button */}
+                <View style={styles.compactSearchBox}>
+                  <Ionicons name="search" size={13} color={Colors.muted} style={{ marginRight: 4 }} />
+                  <TextInput
+                    style={styles.compactSearchInput}
+                    placeholder="Search city, place..."
+                    placeholderTextColor={Colors.muted}
+                    value={mapSearchQuery}
+                    onChangeText={handleMapSearchChange}
+                    onFocus={() => setIsSearchFocused(true)}
+                    autoCorrect={false}
+                    returnKeyType="search"
+                  />
+                  {isSearchingMap ? (
+                    <ActivityIndicator size="small" color={Colors.accent} style={{ marginLeft: 4 }} />
+                  ) : mapSearchQuery.length > 0 ? (
+                    <Pressable
+                      onPress={() => {
+                        setMapSearchQuery("");
+                        setMapSearchResults([]);
+                        setSearchedLocation(null);
+                      }}
+                      hitSlop={6}
+                    >
+                      <Ionicons name="close-circle" size={14} color={Colors.muted} />
+                    </Pressable>
+                  ) : null}
+                </View>
+
+                {/* Quick Refresh Icon */}
+                <Pressable
+                  style={styles.iconBtn}
+                  onPress={() => loadMapData(false)}
+                  hitSlop={8}
+                >
+                  <Ionicons name="refresh-outline" size={16} color={Colors.ink} />
+                </Pressable>
+              </View>
             </View>
 
-            {/* Interactive World Map Component */}
-            <WorldMapSvg
-              places={places}
-              selectedPin={selected}
-              onSelectPin={(pin) => setSelected(pin)}
-            />
+            {/* Live Search Suggestions Dropdown */}
+            {mapSearchResults.length > 0 && (
+              <View style={styles.searchDropdownCard}>
+                <ScrollView
+                  keyboardShouldPersistTaps="handled"
+                  style={{ maxHeight: 210 }}
+                  nestedScrollEnabled
+                >
+                  {mapSearchResults.map((item, idx) => (
+                    <Pressable
+                      key={item.id || idx}
+                      style={[
+                        styles.searchResultItem,
+                        idx < mapSearchResults.length - 1 && styles.searchResultBorder
+                      ]}
+                      onPress={() => handleSelectSearchResult(item)}
+                    >
+                      <View style={[styles.searchResultIconWrap, item.isSaved && { backgroundColor: `${Colors.accent}20` }]}>
+                        <Ionicons
+                          name={item.isSaved ? "heart" : "location-outline"}
+                          size={15}
+                          color={item.isSaved ? Colors.accent : Colors.ink}
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <AppText variant="heading" size={13} color={Colors.ink} numberOfLines={1}>
+                          {item.title}
+                        </AppText>
+                        <AppText variant="mono" size={8} color={Colors.muted} numberOfLines={1}>
+                          {item.subtitle}
+                        </AppText>
+                      </View>
+                      <Ionicons name="chevron-forward" size={13} color={Colors.muted} />
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
 
-            {/* Filter chips */}
+            {/* Row 2: Compact Inline Stats Strip */}
+            <View style={styles.statsStrip}>
+              <View style={styles.statMiniItem}>
+                <AppText variant="heading" size={14} color={Colors.ink}>
+                  {uiStats.countries}
+                </AppText>
+                <AppText variant="smallCaps" size={8} color={Colors.muted} style={{ marginLeft: 3 }}>
+                  COUNTRIES
+                </AppText>
+              </View>
+              <View style={styles.statMiniDivider} />
+
+              <View style={styles.statMiniItem}>
+                <AppText variant="heading" size={14} color={Colors.ink}>
+                  {uiStats.cities}
+                </AppText>
+                <AppText variant="smallCaps" size={8} color={Colors.muted} style={{ marginLeft: 3 }}>
+                  CITIES
+                </AppText>
+              </View>
+              <View style={styles.statMiniDivider} />
+
+              <View style={styles.statMiniItem}>
+                <AppText variant="heading" size={14} color={Colors.accent}>
+                  {uiStats.together}
+                </AppText>
+                <AppText variant="smallCaps" size={8} color={Colors.muted} style={{ marginLeft: 3 }}>
+                  TOGETHER
+                </AppText>
+              </View>
+              <View style={styles.statMiniDivider} />
+
+              <View style={styles.statMiniItem}>
+                <AppText variant="heading" size={14} color={Colors.ink}>
+                  {uiStats.bucket}
+                </AppText>
+                <AppText variant="smallCaps" size={8} color={Colors.muted} style={{ marginLeft: 3 }}>
+                  BUCKET
+                </AppText>
+              </View>
+            </View>
+
+            {/* Row 3: Horizontal Category Filters with Pin Color Dots */}
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
-              style={{ marginBottom: 18 }}
+              contentContainerStyle={styles.filterScrollContent}
             >
-              <View style={{ flexDirection: "row", gap: 6 }}>
-                {TYPE_FILTERS.map((t) => (
-                  <Tag key={t} active={filter === t} onPress={() => setFilter(t)}>
-                    {t.charAt(0).toUpperCase() + t.slice(1)}
-                  </Tag>
-                ))}
-              </View>
+              {TYPE_FILTERS.map((t) => {
+                const isActive = filter === t;
+                const dotColor = t === 'all' ? Colors.ink : PIN_COLORS[t];
+                return (
+                  <Pressable
+                    key={t}
+                    onPress={() => setFilter(t)}
+                    style={[
+                      styles.floatingFilterChip,
+                      isActive && styles.floatingFilterChipActive,
+                    ]}
+                  >
+                    {t !== 'all' && (
+                      <View style={[styles.filterChipDot, { backgroundColor: dotColor }]} />
+                    )}
+                    <AppText
+                      variant="smallCaps"
+                      size={10}
+                      style={{
+                        color: isActive ? '#FFFFFF' : Colors.ink,
+                        fontWeight: isActive ? '700' : '500',
+                        letterSpacing: 0.5,
+                      }}
+                    >
+                      {t.toUpperCase()}
+                    </AppText>
+                  </Pressable>
+                );
+              })}
             </ScrollView>
+          </View>
 
-            {/* Pin list header */}
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "baseline",
-                marginBottom: 14,
-              }}
+          {/* Searched Location Preview Banner */}
+          {searchedLocation && (
+            <View style={styles.searchedLocationCard}>
+              <View style={{ flex: 1, marginRight: 8 }}>
+                <AppText variant="heading" size={15} color={Colors.ink} numberOfLines={1}>
+                  {searchedLocation.city}
+                </AppText>
+                <AppText variant="mono" size={9} color={Colors.muted} numberOfLines={1}>
+                  {searchedLocation.country} · {searchedLocation.lat.toFixed(2)}°, {searchedLocation.lng.toFixed(2)}°
+                </AppText>
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                <Pressable
+                  style={styles.closeSearchBannerBtn}
+                  onPress={() => {
+                    setSearchedLocation(null);
+                    setMapSearchQuery("");
+                  }}
+                  hitSlop={8}
+                >
+                  <Ionicons name="close" size={16} color={Colors.muted} />
+                </Pressable>
+
+                <Pressable
+                  style={styles.addFromSearchBtn}
+                  onPress={() => {
+                    setNewCity(searchedLocation.city);
+                    setNewCountry(searchedLocation.country);
+                    setSearchedLocation(null);
+                    setSheet("new");
+                  }}
+                >
+                  <Ionicons name="add" size={15} color="#FFFFFF" />
+                  <AppText variant="smallCaps" size={10} style={{ color: '#FFFFFF', fontWeight: '700', marginLeft: 3 }}>
+                    Add Place
+                  </AppText>
+                </Pressable>
+              </View>
+            </View>
+          )}
+
+          {/* Classy Floating Map Controls: Live Location */}
+          <View style={styles.floatingRightToolStack} pointerEvents="box-none">
+            {/* Live Location Button */}
+            <Pressable
+              style={[styles.floatingCircleBtn, isLocating && styles.floatingCircleBtnActive]}
+              onPress={handleGetLiveLocation}
+              hitSlop={6}
             >
-              <AppText variant="smallCaps" color={Colors.ink2}>
-                {filtered.length} places
+              {isLocating ? (
+                <ActivityIndicator size="small" color={Colors.accent} />
+              ) : (
+                <Ionicons
+                  name={userLiveLocation ? "locate" : "locate-outline"}
+                  size={21}
+                  color={userLiveLocation ? Colors.accent : Colors.ink}
+                />
+              )}
+            </Pressable>
+          </View>
+
+          {/* FLOATING BOTTOM CONTROLS */}
+          <View style={styles.floatingBottomControls} pointerEvents="box-none">
+            {/* Places List Toggle Button */}
+            <Pressable
+              style={styles.floatingPlacesListBtn}
+              onPress={() => setSheet("placesList")}
+            >
+              <Ionicons name="list" size={16} color={Colors.ink} />
+              <AppText variant="smallCaps" size={11} color={Colors.ink} style={{ fontWeight: '600', marginLeft: 4 }}>
+                Places ({filtered.length})
+              </AppText>
+            </Pressable>
+
+            {/* Add Place FAB */}
+            <Pressable
+              style={styles.floatingAddFab}
+              onPress={() => setSheet("new")}
+            >
+              <Ionicons name="add" size={18} color="#FFFFFF" />
+              <AppText variant="smallCaps" size={11} style={{ color: '#FFFFFF', fontWeight: '700', marginLeft: 4 }}>
+                Add Place
+              </AppText>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {/* All Places List BottomSheet */}
+      <BottomSheet
+        open={sheet === "placesList"}
+        onClose={() => setSheet(null)}
+        kicker="EXPLORE"
+        title={`All Places (${filtered.length})`}
+      >
+        <View style={{ paddingBottom: 24 }}>
+          {/* Quick Filter inside Sheet */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              {TYPE_FILTERS.map((t) => (
+                <Tag key={t} active={filter === t} onPress={() => setFilter(t)}>
+                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                </Tag>
+              ))}
+            </View>
+          </ScrollView>
+
+          {filtered.length === 0 ? (
+            <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+              <Ionicons name="map-outline" size={38} color={Colors.muted} style={{ marginBottom: 8 }} />
+              <AppText variant="serifItalic" size={15} color={Colors.muted} style={{ textAlign: 'center' }}>
+                No places saved for "{filter.toUpperCase()}".
               </AppText>
               <AppButton
-                variant="ghost"
+                variant="outline"
                 size="sm"
-                onPress={() => setSheet("new")}
-                textStyle={{ color: Colors.accent }}
+                style={{ marginTop: 14 }}
+                onPress={() => {
+                  setSheet("new");
+                }}
               >
-                + ADD
+                + Add Place
               </AppButton>
             </View>
-
-            {filtered.map((p) => (
+          ) : (
+            filtered.map((p) => (
               <PinCard
                 key={p.id}
                 pin={p}
@@ -518,12 +1169,10 @@ export const MapScreen: React.FC = () => {
                   setSheet("detail");
                 }}
               />
-            ))}
-
-            <View style={{ height: 80 }} />
-          </View>
-        </ScrollView>
-      )}
+            ))
+          )}
+        </View>
+      </BottomSheet>
 
       {/* Detail BottomSheet */}
       <BottomSheet
@@ -533,7 +1182,7 @@ export const MapScreen: React.FC = () => {
         title={selected?.city ?? ""}
       >
         {selected && (
-          <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 500 }}>
+          <View style={{ paddingBottom: 20 }}>
             <AppText
               variant="mono"
               color={Colors.muted}
@@ -694,7 +1343,7 @@ export const MapScreen: React.FC = () => {
                 full
                 variant="accent"
                 size="lg"
-                style={{ marginTop: 24, marginBottom: 10 }}
+                style={{ marginTop: 14, marginBottom: 10 }}
                 onPress={() => handleTransitionBucket(selected)}
               >
                 Plan a trip here →
@@ -756,15 +1405,27 @@ export const MapScreen: React.FC = () => {
                 </View>
               )
             ) : (
-              <AppButton
-                full
-                variant="outline"
-                size="lg"
-                style={{ marginTop: 12 }}
-                onPress={() => handleDeletePlace(selected.id.toString())}
-              >
-                Remove Place
-              </AppButton>
+              <View style={{ gap: 8, marginTop: 14 }}>
+                <AppButton
+                  full
+                  variant="outline"
+                  size="lg"
+                  onPress={() => handleOpenEditPlace(selected)}
+                >
+                  Edit Place Details
+                </AppButton>
+                <AppButton
+                  full
+                  variant="outline"
+                  size="lg"
+                  style={{ borderColor: '#D9534F' }}
+                  textStyle={{ color: '#D9534F' }}
+                  disabled={isDeleting}
+                  onPress={() => handleDeletePlace(selected.id.toString())}
+                >
+                  {isDeleting ? "Removing..." : "Remove Place"}
+                </AppButton>
+              </View>
             )}
 
             <AppButton
@@ -776,34 +1437,197 @@ export const MapScreen: React.FC = () => {
             >
               Close
             </AppButton>
-          </ScrollView>
+          </View>
         )}
+      </BottomSheet>
+
+      {/* Edit Place BottomSheet */}
+      <BottomSheet
+        open={sheet === "edit" && !!selected}
+        onClose={() => setSheet("detail")}
+        kicker="EDIT"
+        title="Edit Place Details"
+      >
+        <View style={{ paddingBottom: 20 }}>
+          <AppText
+            variant="serifItalic"
+            size={14}
+            color={Colors.muted}
+            style={{ marginBottom: 18 }}
+          >
+            Update details or fix mistakes for this marked place.
+          </AppText>
+
+          <AppTextInput
+            label="City"
+            n="01"
+            value={editCity}
+            onChangeText={setEditCity}
+          />
+          <AppTextInput
+            label="Country"
+            n="02"
+            value={editCountry}
+            onChangeText={setEditCountry}
+          />
+
+          <View style={styles.meetOptions}>
+            {categoryOptions.map((option) => (
+              <Pressable
+                key={option.value}
+                style={[
+                  styles.meetOption,
+                  editCategory === option.value && styles.meetSelected,
+                ]}
+                onPress={() => setEditCategory(option.value)}
+              >
+                <AppText
+                  variant="smallCaps"
+                  style={{
+                    color: editCategory === option.value ? "#fff" : Colors.ink,
+                  }}
+                >
+                  {option.label}
+                </AppText>
+                <View
+                  style={[
+                    styles.radio,
+                    editCategory === option.value && styles.radioSelected,
+                  ]}
+                />
+              </Pressable>
+            ))}
+          </View>
+
+          <AppTextInput
+            label="A Note"
+            n="04"
+            placeholder="What draws you there..."
+            value={editNote}
+            onChangeText={setEditNote}
+          />
+
+          {(editCategory === 'together' || editCategory === 'upcoming') && (
+            <View style={{ marginBottom: 20 }}>
+              <AppText variant="smallCaps" color={Colors.ink2} style={{ fontSize: 12, marginBottom: 8 }}>
+                Visit Date (Optional)
+              </AppText>
+              <Pressable
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: 15,
+                  backgroundColor: '#EAE2D4',
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: Colors.rule,
+                }}
+                onPress={() => setShowEditDatePicker(true)}
+              >
+                <AppText variant="display" size={20}>
+                  {editDateObj.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })}
+                </AppText>
+                <Ionicons name="calendar-outline" size={24} color="#000" />
+              </Pressable>
+
+              {showEditDatePicker && (
+                <DateTimePicker
+                  value={editDateObj}
+                  mode="date"
+                  display="default"
+                  onChange={(event: any, selectedDate?: Date) => {
+                    setShowEditDatePicker(Platform.OS === 'ios');
+                    if (selectedDate) setEditDateObj(selectedDate);
+                  }}
+                />
+              )}
+            </View>
+          )}
+
+          <AppButton
+            full
+            variant="solid"
+            size="lg"
+            style={{ marginTop: 12 }}
+            disabled={isSavingEdit}
+            onPress={handleSaveEditPlace}
+          >
+            {isSavingEdit ? "Saving Changes..." : "Save Changes"}
+          </AppButton>
+        </View>
       </BottomSheet>
 
       {/* Add pin sheet */}
       <BottomSheet
         open={sheet === "new"}
-        onClose={() => setSheet(null)}
+        onClose={() => {
+          setSheet(null);
+          setSuggestions([]);
+          setNewPlaceCoords(null);
+          setClearTempPinTrigger(prev => prev + 1);
+        }}
         kicker="NEW"
         title="Mark a place"
       >
-        <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 500 }}>
+        <View style={{ paddingBottom: 20 }}>
+          {newPlaceCoords && (
+            <View style={styles.pinnedLocationBadge}>
+              <Ionicons name="location" size={13} color={Colors.accent} />
+              <AppText variant="mono" size={10} color={Colors.ink} style={{ marginLeft: 5, fontWeight: '600' }}>
+                PINNED SPOT · {newPlaceCoords.lat.toFixed(4)}°, {newPlaceCoords.lng.toFixed(4)}°
+              </AppText>
+              {isReverseGeocoding && (
+                <ActivityIndicator size="small" color={Colors.accent} style={{ marginLeft: 8 }} />
+              )}
+            </View>
+          )}
+
           <AppText
             variant="serifItalic"
             size={15}
             color={Colors.muted}
             style={{ marginBottom: 22 }}
           >
-            Add a city to your shared map.
+            {newPlaceCoords ? "Save this pinned spot to your shared map." : "Add a city to your shared map."}
           </AppText>
 
           <AppTextInput
             label="City"
             n="01"
-            placeholder="Lisbon"
+            placeholder="Search city (e.g. Lisbon, Paris, Tokyo)"
             value={newCity}
-            onChangeText={setNewCity}
+            onChangeText={handleCityQueryChange}
           />
+
+          {isSearchingCity && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: -14, marginBottom: 12, paddingLeft: 4 }}>
+              <ActivityIndicator size="small" color={Colors.accent} />
+              <AppText variant="mono" size={10} color={Colors.muted}>Searching cities...</AppText>
+            </View>
+          )}
+
+          {suggestions.length > 0 && (
+            <View style={styles.suggestionsCard}>
+              {suggestions.map((item, idx) => (
+                <Pressable
+                  key={idx}
+                  style={[styles.suggestionItem, idx < suggestions.length - 1 && styles.suggestionBorder]}
+                  onPress={() => {
+                    setNewCity(item.city);
+                    if (item.country) setNewCountry(item.country);
+                    setSuggestions([]);
+                  }}
+                >
+                  <Ionicons name="location-outline" size={14} color={Colors.accent} style={{ marginRight: 6 }} />
+                  <AppText variant="mono" size={11} color={Colors.ink} style={{ flex: 1 }}>
+                    {item.place_name}
+                  </AppText>
+                </Pressable>
+              ))}
+            </View>
+          )}
+
           <AppTextInput
             label="Country"
             n="02"
@@ -893,11 +1717,12 @@ export const MapScreen: React.FC = () => {
             variant="solid"
             size="lg"
             style={{ marginTop: 12 }}
+            disabled={isSubmitting}
             onPress={handleCreatePlace}
           >
-            Add to map →
+            {isSubmitting ? "Adding to map..." : "Add to map →"}
           </AppButton>
-        </ScrollView>
+        </View>
       </BottomSheet>
       
       {renderImageModal()}
@@ -918,17 +1743,6 @@ const styles = StyleSheet.create({
   },
   statBlock: { flex: 1, alignItems: "center" },
   statBorder: { borderRightWidth: 1, borderRightColor: Colors.rule },
-  mapPlaceholder: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: Colors.rule,
-    backgroundColor: Colors.cream,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 16,
-    padding: 20,
-    gap: 12,
-  },
   meetOptions: {
     marginBottom: 10,
     gap: 8,
@@ -955,23 +1769,12 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.accent,
     borderColor: Colors.accent,
   },
-
-  legend: {
-    flexDirection: "row",
-    gap: 14,
-    flexWrap: "wrap",
-    justifyContent: "center",
-    marginTop: 10,
-  },
-  legendDot: { width: 8, height: 8, borderRadius: 4 },
   dateBlock: {
     padding: 14,
     borderRadius: 10,
     backgroundColor: `${Colors.accent}10`,
     marginBottom: 18,
   },
-
-  // Dynamic moments styling
   photoMomentCard: {
     backgroundColor: Colors.cream,
     borderRadius: 14,
@@ -1010,4 +1813,297 @@ const styles = StyleSheet.create({
   momentTypeBtnActive: {
     backgroundColor: '#1C1C1E',
   },
+  suggestionsCard: {
+    backgroundColor: Colors.cream,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.rule,
+    marginBottom: 14,
+    marginTop: -10,
+    overflow: 'hidden',
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+  },
+  suggestionBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.rule,
+  },
+  mapViewport: {
+    flex: 1,
+    position: 'relative',
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#F7F3EC',
+  },
+  floatingHeaderCard: {
+    position: 'absolute',
+    top: 10,
+    left: 12,
+    right: 12,
+    zIndex: 10,
+    backgroundColor: 'rgba(247, 243, 236, 0.94)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(216, 207, 196, 0.85)',
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 8,
+    shadowColor: Colors.ink,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  headerTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  placeBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    backgroundColor: '#EAE2D4',
+    borderRadius: 8,
+  },
+  iconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#EAE2D4',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addMiniPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.accent,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    gap: 3,
+  },
+  statsStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#EFE9DE',
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    marginBottom: 8,
+  },
+  statMiniItem: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+  },
+  statMiniDivider: {
+    width: 1,
+    height: 12,
+    backgroundColor: Colors.rule,
+  },
+  filterScrollContent: {
+    flexDirection: 'row',
+    gap: 6,
+    paddingVertical: 2,
+  },
+  floatingFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    backgroundColor: '#EAE2D4',
+    gap: 5,
+  },
+  floatingFilterChipActive: {
+    backgroundColor: '#1C1C1E',
+  },
+  filterChipDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  floatingBottomControls: {
+    position: 'absolute',
+    bottom: 20,
+    left: 14,
+    right: 14,
+    zIndex: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  floatingPlacesListBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(247, 243, 236, 0.96)',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(216, 207, 196, 0.9)',
+    shadowColor: Colors.ink,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  floatingAddFab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.accent,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 22,
+    shadowColor: Colors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  compactSearchBox: {
+    flex: 1,
+    maxWidth: 220,
+    height: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFE9DE',
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(216, 207, 196, 0.75)',
+  },
+  compactSearchInput: {
+    flex: 1,
+    fontSize: 12,
+    color: Colors.ink,
+    padding: 0,
+  },
+  searchDropdownCard: {
+    backgroundColor: '#FBF8F3',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.rule,
+    marginBottom: 8,
+    overflow: 'hidden',
+    shadowColor: Colors.ink,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    gap: 10,
+  },
+  searchResultBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#EFE9DE',
+  },
+  searchResultIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#EAE2D4',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchedLocationCard: {
+    position: 'absolute',
+    bottom: 75,
+    left: 14,
+    right: 68,
+    zIndex: 10,
+    backgroundColor: 'rgba(247, 243, 236, 0.96)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.accent,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    shadowColor: Colors.ink,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  closeSearchBannerBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#EAE2D4',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addFromSearchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.accent,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+  },
+  floatingRightToolStack: {
+    position: 'absolute',
+    bottom: 80,
+    right: 16,
+    zIndex: 10,
+    gap: 10,
+    alignItems: 'center',
+  },
+  floatingCircleBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(247, 243, 236, 0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(216, 207, 196, 0.85)',
+    shadowColor: Colors.ink,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  floatingCircleBtnActive: {
+    borderColor: Colors.accent,
+    backgroundColor: '#FFFFFF',
+  },
+  compassRoseWrap: {
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  compassNorthDot: {
+    position: 'absolute',
+    top: 3,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.accent,
+  },
+  pinnedLocationBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(192, 86, 64, 0.12)',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    marginBottom: 14,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: 'rgba(192, 86, 64, 0.25)',
+  },
 });
+
+

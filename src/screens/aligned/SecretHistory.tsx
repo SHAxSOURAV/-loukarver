@@ -123,7 +123,7 @@ export const SecretHistory: React.FC = () => {
     }
   }, [viewingSecret, mediaDataUri]);
 
-  // Timeout safety: if decrypting takes longer than 15s, abort and alert
+  // Timeout safety: if decrypting takes longer than 30s, abort and alert
   useEffect(() => {
     let decryptTimer: any = null;
     if (viewingSecret && !mediaDataUri) {
@@ -131,7 +131,7 @@ export const SecretHistory: React.FC = () => {
         setViewingSecret(null);
         setMediaDataUri(null);
         CustomAlert.alert("Timeout", "Decrypting secret timed out. Please check your connection and try again.");
-      }, 15000);
+      }, 30000);
     }
     return () => {
       if (decryptTimer) clearTimeout(decryptTimer);
@@ -167,7 +167,7 @@ export const SecretHistory: React.FC = () => {
   const handleViewSecretIn = async (secret: any) => {
     setViewingSecret(secret);
     setMediaDataUri(null);
-    setDownloadProgress(0);
+    setDownloadProgress(null);
     setIsPaused(false);
 
     try {
@@ -178,45 +178,6 @@ export const SecretHistory: React.FC = () => {
       }
 
       setViewingSecret((prev: any) => ({ ...prev, ...viewInfo }));
-
-      const isVideo = isCurrentMediaVideo(viewInfo, viewInfo.url);
-
-      // Fast sequential caching for native mobile:
-      // Eliminates Range request high-latency roundtrips from Europe to Bangladesh
-      if (isVideo && Platform.OS !== 'web' && viewInfo.url.startsWith('http')) {
-        const localExt = (viewInfo.filename || '').toLowerCase().endsWith('.mov') ? '.mov' : '.mp4';
-        const localFileUri = `${FileSystem.cacheDirectory}secret_stream_${targetId}${localExt}`;
-
-        try {
-          const fileInfo = await FileSystem.getInfoAsync(localFileUri);
-          if (fileInfo.exists && fileInfo.size > 0) {
-            setMediaDataUri(localFileUri);
-            setDownloadProgress(null);
-            return;
-          }
-        } catch (e) {}
-
-        const downloadResumable = FileSystem.createDownloadResumable(
-          viewInfo.url,
-          localFileUri,
-          {},
-          (progress) => {
-            if (progress.totalBytesExpectedToWrite > 0) {
-              const pct = Math.min(100, Math.round((progress.totalBytesWritten / progress.totalBytesExpectedToWrite) * 100));
-              setDownloadProgress(pct);
-            }
-          }
-        );
-
-        const result = await downloadResumable.downloadAsync();
-        if (result?.uri) {
-          setMediaDataUri(result.uri);
-          setDownloadProgress(null);
-          return;
-        }
-      }
-
-      // Fallback or image
       setMediaDataUri(viewInfo.url);
       setDownloadProgress(null);
     } catch (apiErr: any) {
@@ -283,17 +244,22 @@ export const SecretHistory: React.FC = () => {
         </View>
 
         <View style={styles.messageMeta}>
-          <AppText variant="mono" style={{ color: '#8C7F75', fontSize: 12 }}>
-            {isVideo ? '🎥 VIDEO' : '📷 PHOTO'} • OPENS ONCE • {secret.delete_after}
-          </AppText>
+          <View style={styles.metaTextContainer}>
+            <AppText variant="mono" style={styles.metaMainText} numberOfLines={1}>
+              {isVideo ? '🎥 VIDEO' : '📷 PHOTO'} • OPENS ONCE
+            </AppText>
+            <AppText variant="mono" style={styles.metaSubText} numberOfLines={1}>
+              ⏳ {secret.delete_after}
+            </AppText>
+          </View>
           
           {(!secret.is_viewed || secret.rewatch_status === 'approved') ? (
             <Pressable onPress={() => handleViewSecretIn(secret)} style={styles.openButton}>
-              <AppText variant="mono" style={{ color: '#fff', fontSize: 10 }}>TAP TO VIEW</AppText>
+              <AppText variant="mono" style={styles.openButtonText}>TAP TO VIEW</AppText>
             </Pressable>
           ) : secret.rewatch_status === 'requested' ? (
             <View style={[styles.openButton, { backgroundColor: '#5c544d' }]}>
-              <AppText variant="mono" style={{ color: '#fff', fontSize: 12 }}>WAITING...</AppText>
+              <AppText variant="mono" style={styles.openButtonText}>WAITING...</AppText>
             </View>
           ) : (
             <Pressable 
@@ -301,7 +267,7 @@ export const SecretHistory: React.FC = () => {
               disabled={requestingSecretId === secret.id}
               style={[styles.openButton, { backgroundColor: '#8C7F75', opacity: requestingSecretId === secret.id ? 0.7 : 1 }]}
             >
-              <AppText variant="mono" style={{ color: '#fff', fontSize: 12 }}>
+              <AppText variant="mono" style={styles.openButtonText}>
                 {requestingSecretId === secret.id ? "REQUESTING..." : "ASK TO REWATCH"}
               </AppText>
             </Pressable>
@@ -313,17 +279,16 @@ export const SecretHistory: React.FC = () => {
 
   const renderMediaViewer = () => {
     if (!mediaDataUri) {
-      const isPreparingStream = downloadProgress !== null && downloadProgress >= 0;
       return (
         <View style={viewerStyles.loadingContainer}>
           <View style={viewerStyles.loadingPulse}>
             <ActivityIndicator size="large" color="#E06C6C" />
           </View>
           <AppText variant="mono" style={viewerStyles.loadingText}>
-            {isPreparingStream ? `DECRYPTING ${downloadProgress}%` : 'DECRYPTING...'}
+            DECRYPTING...
           </AppText>
           <AppText variant="serifItalic" style={viewerStyles.loadingSubtext}>
-            {isPreparingStream ? 'Optimizing high-speed secure stream' : 'Preparing your secret media'}
+            Preparing your secret media
           </AppText>
         </View>
       );
@@ -438,7 +403,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
     paddingHorizontal: 20, paddingTop: 10,
   },
-  messageCard: { backgroundColor: '#2D1D1A', borderRadius: 16, padding: 10, marginBottom: 24 },
+  messageCard: { backgroundColor: '#2D1D1A', borderRadius: 16, padding: 14, marginBottom: 20, borderWidth: 1, borderColor: '#3D2824' },
   messageHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
   avatar: {
     width: 36, height: 36, borderRadius: 18, backgroundColor: '#E06C6C',
@@ -447,9 +412,38 @@ const styles = StyleSheet.create({
   fromText: { fontSize: 11, color: '#AD442E', letterSpacing: 1 },
   messageMeta: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    borderTopWidth: 1, borderTopColor: '#3D2A26', paddingTop: 12,
+    borderTopWidth: 1, borderTopColor: '#3D2A26', paddingTop: 12, gap: 12,
   },
-  openButton: { backgroundColor: '#AD442E', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  metaTextContainer: {
+    flex: 1,
+    marginRight: 8,
+  },
+  metaMainText: {
+    color: '#A8998D',
+    fontSize: 11,
+    letterSpacing: 0.5,
+  },
+  metaSubText: {
+    color: '#8C7F75',
+    fontSize: 10,
+    marginTop: 3,
+    letterSpacing: 0.5,
+  },
+  openButton: { 
+    backgroundColor: '#AD442E', 
+    paddingHorizontal: 12, 
+    paddingVertical: 8, 
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 105,
+  },
+  openButtonText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
 });
 
 const viewerStyles = StyleSheet.create({

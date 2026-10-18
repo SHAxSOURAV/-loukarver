@@ -221,7 +221,7 @@ export function AlignedTabs() {
         tabBarLabel: ({ focused, color }) => {
           const item = NAV_ITEMS.find(n => n.name === route.name);
           return (
-            <Text style={[styles.tabLabel, { color }]}>
+            <Text style={[styles.tabLabel, { color }, focused && styles.tabLabelFocused]}>
               {item?.label.toUpperCase()}
             </Text>
           );
@@ -264,11 +264,16 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.accent,
     borderRadius: 1,
   },
-  tabMark: { fontSize: 15, lineHeight: 20 },
+  tabMark: { fontSize: 18, lineHeight: 22 },
   tabLabel: {
-    fontFamily: Fonts.mono,
-    fontSize: 9,
-    letterSpacing: 1,
+    fontFamily: Fonts.monoMedium,
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.9,
     marginTop: 2,
+  },
+  tabLabelFocused: {
+    fontFamily: Fonts.monoSemiBold,
+    fontWeight: '700',
   },
 });

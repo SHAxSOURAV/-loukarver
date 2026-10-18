@@ -49,6 +49,8 @@ export default function App() {
     'InstrumentSerif-Regular': require('./assets/fonts/InstrumentSerif-Regular.ttf'),
     'InstrumentSerif-Italic': require('./assets/fonts/InstrumentSerif-Italic.ttf'),
     'JetBrainsMono-Regular': require('./assets/fonts/ttf/JetBrainsMono-Regular.ttf'),
+    'JetBrainsMono-Medium': require('./assets/fonts/ttf/JetBrainsMono-Medium.ttf'),
+    'JetBrainsMono-SemiBold': require('./assets/fonts/ttf/JetBrainsMono-SemiBold.ttf'),
   });
 
   if (!fontsLoaded) {
