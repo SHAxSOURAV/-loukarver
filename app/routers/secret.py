@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, BackgroundTasks, Form, Query
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, BackgroundTasks, Form, Query, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from typing import List
 
 from app.routers.auth import get_current_user
@@ -106,7 +106,7 @@ async def get_secret_view_url_endpoint(
         file_url = doc.get("stored_filename", "")
         if file_url and "amazonaws.com" in file_url:
             from app.services.s3_utils import s3_service
-            file_url = s3_service.generate_presigned_view_url(file_url, expires_in=3600)
+            file_url = s3_service.generate_presigned_view_url(file_url, expires_in=7200)
         elif not file_url.startswith("http") and not file_url.startswith("/"):
             file_url = f"/{file_url}"
 
@@ -127,44 +127,56 @@ async def get_secret_view_url_endpoint(
             }
         }
     except ValueError as ve:
-        raise HTTPException(status_code=404, detail=str(ve))
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/view/{secret_id}")
 async def view_secret(
     secret_id: str,
+    request: Request,
     background_tasks: BackgroundTasks,
     timezone: str = Query("UTC", description="Your current IANA timezone (e.g. Asia/Dhaka)"),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Open and view a secret photo. 
-    - If you are the RECIPIENT: The file is deleted from the server immediately after viewing.
-    - If you are the SENDER: You can view it without triggering deletion.
+    Open and view a secret media (video or photo).
+    Supports both JSON API consumption for mobile players and direct HTTP redirects.
     """
     try:
         doc = await secret_service.get_secret_metadata(secret_id, current_user["id"], timezone)
         
-        # If recipient is viewing, trigger one-time-view logic
+        # If recipient is viewing, trigger view marking
         if doc["recipient_id"] == current_user["id"]:
             await secret_service.mark_secret_viewed(secret_id)
             
         file_url = doc.get("stored_filename", "")
         if file_url and "amazonaws.com" in file_url:
             from app.services.s3_utils import s3_service
-            presigned = s3_service.generate_presigned_view_url(file_url, expires_in=3600)
-            from fastapi.responses import RedirectResponse
-            return RedirectResponse(url=presigned)
-        else:
-            file_path = secret_service.get_full_path(doc["stored_filename"])
-            return FileResponse(
-                path=file_path,
-                filename=doc["filename"],
-                media_type=doc["file_type"]
-            )
+            file_url = s3_service.generate_presigned_view_url(file_url, expires_in=7200)
+        elif not file_url.startswith("http") and not file_url.startswith("/"):
+            file_url = f"/{file_url}"
+
+        filename = doc.get("filename", "")
+        file_type = doc.get("file_type", "")
+        is_video = bool((file_type and file_type.startswith("video")) or filename.endswith(".mp4") or filename.endswith(".mov"))
+
+        data = {
+            "id": str(doc.get("id") or doc.get("_id")),
+            "url": file_url,
+            "filename": filename,
+            "file_type": file_type,
+            "is_video": is_video,
+            "prevent_screenshot": doc.get("prevent_screenshot", True),
+            "delete_after": doc.get("delete_after", "24 Hours")
+        }
+
+        return {
+            "success": True,
+            "data": data
+        }
     except ValueError as ve:
-        raise HTTPException(status_code=404, detail=str(ve))
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

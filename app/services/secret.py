@@ -220,18 +220,44 @@ class SecretService:
         now_utc = datetime.now(timezone.utc)
         doc = await self.secrets_collection.find_one({
             "_id": ObjectId(secret_id),
-            "$and": [
-                {"$or": [{"recipient_id": user_id}, {"sender_id": user_id}]},
-                {"$or": [
-                    {"is_viewed": False},
-                    {"rewatch_status": "approved"},
-                    {"viewed_at": {"$gte": now_utc - timedelta(minutes=5)}}
-                ]}
-            ]
+            "$or": [{"recipient_id": user_id}, {"sender_id": user_id}]
         })
         if not doc:
-            raise ValueError("Secret not found or already deleted.")
+            raise ValueError("Secret not found or expired.")
         
+        # Expiration check
+        exp = doc.get("expires_at")
+        if isinstance(exp, datetime):
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if now_utc > exp:
+                raise ValueError("This secret has expired and is no longer available.")
+
+        # Permission & viewing state check
+        is_recipient = doc.get("recipient_id") == user_id
+        is_sender = doc.get("sender_id") == user_id
+
+        if is_recipient:
+            # Recipient can view if:
+            # 1. Not yet viewed (first open)
+            # 2. Rewatch was approved by sender
+            # 3. Currently within active streaming window (allow 24 hours or until expiry so video doesn't stall/fail)
+            is_viewed = doc.get("is_viewed", False)
+            rewatch_status = doc.get("rewatch_status", "none")
+            
+            if is_viewed and rewatch_status != "approved":
+                # Check active viewing window
+                viewed_at = doc.get("viewed_at")
+                if viewed_at:
+                    if isinstance(viewed_at, datetime):
+                        if viewed_at.tzinfo is None:
+                            viewed_at = viewed_at.replace(tzinfo=timezone.utc)
+                        # Allow active streaming / rebuffering for 24 hours after opening
+                        if now_utc - viewed_at > timedelta(hours=24):
+                            raise ValueError("This secret was already viewed. Ask your partner to rewatch!")
+                else:
+                    raise ValueError("This secret was already viewed. Ask your partner to rewatch!")
+
         try:
             tz = zoneinfo.ZoneInfo(user_timezone)
         except Exception:
@@ -253,18 +279,23 @@ class SecretService:
         if not doc:
             return
 
+        now_utc = datetime.now(timezone.utc)
+        already_viewed = doc.get("is_viewed", False)
+
+        # Update viewed status and timestamp
         await self.secrets_collection.update_one(
             {"_id": ObjectId(secret_id)},
             {"$set": {
                 "is_viewed": True, 
                 "status": "viewed", 
-                "viewed_at": datetime.now(timezone.utc),
+                "viewed_at": now_utc,
                 "rewatch_status": "none"
             }}
         )
         
-        # Fire websocket back to sender for read receipts
-        await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_VIEWED"})
+        # Fire websocket back to sender for read receipts only if state changed
+        if not already_viewed or doc.get("rewatch_status") == "approved":
+            await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_VIEWED"})
 
     async def request_rewatch(self, secret_id: str, user_id: str):
         doc = await self.secrets_collection.find_one({"_id": ObjectId(secret_id), "recipient_id": user_id})

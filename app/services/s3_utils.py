@@ -6,20 +6,28 @@ from fastapi import UploadFile
 from fastapi.concurrency import run_in_threadpool
 from app.core.config import settings
 
+from botocore.config import Config
+
 class S3Service:
     def __init__(self):
+        self.bucket_name = settings.AWS_S3_BUCKET_NAME
+        self.region = settings.AWS_REGION or "eu-north-1"
+
         if settings.AWS_ACCESS_KEY_ID and settings.AWS_S3_BUCKET_NAME:
+            s3_config = Config(
+                region_name=self.region,
+                signature_version='s3v4',
+                s3={'addressing_style': 'virtual'}
+            )
             self.s3_client = boto3.client(
                 's3',
                 aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
                 aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-                region_name=settings.AWS_REGION
+                endpoint_url=f"https://s3.{self.region}.amazonaws.com",
+                config=s3_config
             )
         else:
             self.s3_client = None
-            
-        self.bucket_name = settings.AWS_S3_BUCKET_NAME
-        self.region = settings.AWS_REGION
 
     def _upload_sync(self, file_obj, filename, content_type):
         self.s3_client.upload_fileobj(
@@ -100,19 +108,22 @@ class S3Service:
         except Exception:
             pass
 
-    def generate_presigned_view_url(self, file_url_or_key: str, expires_in: int = 3600) -> str:
+    def generate_presigned_view_url(self, file_url_or_key: str, expires_in: int = 7200) -> str:
         """
         Generates a secure temporary pre-signed URL for direct streaming/downloading from AWS S3.
         Safe for private buckets and native mobile video players.
         """
-        if not self.s3_client or not file_url_or_key or "amazonaws.com" not in file_url_or_key:
+        if not self.s3_client or not file_url_or_key:
             return file_url_or_key
             
         try:
             if ".amazonaws.com/" in file_url_or_key:
                 key = file_url_or_key.split(".amazonaws.com/")[1]
+            elif file_url_or_key.startswith("http"):
+                return file_url_or_key
             else:
-                key = file_url_or_key
+                key = file_url_or_key.lstrip("/")
+
             return self.s3_client.generate_presigned_url(
                 'get_object',
                 Params={'Bucket': self.bucket_name, 'Key': key},
