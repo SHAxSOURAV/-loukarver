@@ -50,7 +50,21 @@ class DateReviewsResponse(BaseModel):
     success: bool
     data: List[DateReviewRead]
 
+class VenueSuggestRequest(BaseModel):
+    city: str
+    mood: Optional[str] = "Romantic"
+    vibe: Optional[str] = "Cozy"
+
+class VenueSuggestResponse(BaseModel):
+    success: bool = True
+    venue: str
+    location: str
+    title: str
+    note: str
+    city: str
+
 class DateBase(BaseModel):
+    title: Optional[str] = None
     where: str = Field(..., description="Location name or place")
     date: str = Field(..., description="Date of the date, e.g. '12.25.2023'")
     time: str = Field(..., description="Time of the date, e.g. '09:00 PM'")
@@ -66,6 +80,7 @@ class DateCreate(DateBase):
     pass
 
 class DateUpdate(BaseModel):
+    title: Optional[str] = None
     where: Optional[str] = None
     date: Optional[str] = None
     time: Optional[str] = None

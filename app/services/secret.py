@@ -298,15 +298,20 @@ class SecretService:
             await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_VIEWED"})
 
     async def request_rewatch(self, secret_id: str, user_id: str):
-        doc = await self.secrets_collection.find_one({"_id": ObjectId(secret_id), "recipient_id": user_id})
+        try:
+            oid = ObjectId(secret_id)
+        except Exception:
+            raise ValueError("Invalid secret ID.")
+        doc = await self.secrets_collection.find_one({"_id": oid, "recipient_id": user_id})
         if not doc:
             raise ValueError("Secret not found or you are not the recipient.")
         
         await self.secrets_collection.update_one(
-            {"_id": ObjectId(secret_id)},
+            {"_id": oid},
             {"$set": {"rewatch_status": "requested"}}
         )
-        await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_REWATCH_REQUESTED"})
+        await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_REWATCH_REQUESTED", "secret_id": str(oid)})
+        await ws_manager.broadcast_to_user(doc["recipient_id"], {"type": "SECRET_REWATCH_REQUESTED", "secret_id": str(oid)})
         
         # Send Push Notification to Sender
         u_name, p_name = await self._get_names(user_id, doc["sender_id"])
@@ -318,15 +323,20 @@ class SecretService:
         ))
         
     async def approve_rewatch(self, secret_id: str, user_id: str):
-        doc = await self.secrets_collection.find_one({"_id": ObjectId(secret_id), "sender_id": user_id})
+        try:
+            oid = ObjectId(secret_id)
+        except Exception:
+            raise ValueError("Invalid secret ID.")
+        doc = await self.secrets_collection.find_one({"_id": oid, "sender_id": user_id})
         if not doc:
             raise ValueError("Secret not found or you are not the sender.")
             
         await self.secrets_collection.update_one(
-            {"_id": ObjectId(secret_id)},
+            {"_id": oid},
             {"$set": {"rewatch_status": "approved", "is_viewed": False, "status": "delivered"}}
         )
-        await ws_manager.broadcast_to_user(doc["recipient_id"], {"type": "SECRET_REWATCH_APPROVED"})
+        await ws_manager.broadcast_to_user(doc["recipient_id"], {"type": "SECRET_REWATCH_APPROVED", "secret_id": str(oid)})
+        await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_REWATCH_APPROVED", "secret_id": str(oid)})
         
         # Send Push Notification
         u_name, p_name = await self._get_names(user_id, doc["recipient_id"])
@@ -338,15 +348,20 @@ class SecretService:
         ))
 
     async def decline_rewatch(self, secret_id: str, user_id: str):
-        doc = await self.secrets_collection.find_one({"_id": ObjectId(secret_id), "sender_id": user_id})
+        try:
+            oid = ObjectId(secret_id)
+        except Exception:
+            raise ValueError("Invalid secret ID.")
+        doc = await self.secrets_collection.find_one({"_id": oid, "sender_id": user_id})
         if not doc:
             raise ValueError("Secret not found or you are not the sender.")
             
         await self.secrets_collection.update_one(
-            {"_id": ObjectId(secret_id)},
+            {"_id": oid},
             {"$set": {"rewatch_status": "denied"}}
         )
-        await ws_manager.broadcast_to_user(doc["recipient_id"], {"type": "SECRET_REWATCH_DENIED"})
+        await ws_manager.broadcast_to_user(doc["recipient_id"], {"type": "SECRET_REWATCH_DENIED", "secret_id": str(oid)})
+        await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_REWATCH_DENIED", "secret_id": str(oid)})
         
         # Send Push Notification to Recipient
         u_name, p_name = await self._get_names(user_id, doc["recipient_id"])

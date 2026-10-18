@@ -48,6 +48,8 @@ class PlaceBase(BaseModel):
     description: Optional[str] = None
     visit_date: Optional[str] = Field(None, description="Format: mm.dd.yyyy")
     timezone: str = "UTC"
+    lat: Optional[float] = None
+    lng: Optional[float] = None
 
 class PlaceCreate(PlaceBase):
     model_config = {

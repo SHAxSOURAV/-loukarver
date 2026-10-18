@@ -7,12 +7,39 @@ from app.routers.auth import get_current_user
 from app.schemas.dates import (
     DateCreate, DateUpdate, DateResponse, DatePaginatedResponse,
     DateRespond, DateReviewCreate, GenericResponse, DateReviewsResponse,
-    PhotoPayload
+    PhotoPayload, VenueSuggestRequest, VenueSuggestResponse
 )
 from app.services.dates import date_service
+from app.services.venue_service import venue_service
 from app.services.s3_utils import s3_service
 
 router = APIRouter(prefix="/dates", tags=["Dates"])
+
+@router.post("/suggest-venue", response_model=VenueSuggestResponse)
+async def suggest_date_venue(
+    payload: VenueSuggestRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Suggest an authentic real date venue based on city, mood, and vibe, rotating away from past suggestions."""
+    try:
+        # Fetch previous venues for user/partner to avoid repetition
+        exclude_venues = await date_service.get_recent_venue_names(current_user["id"])
+        venue_data = await venue_service.get_recommended_venue(
+            city=payload.city,
+            mood=payload.mood or "Romantic",
+            vibe=payload.vibe or "Cozy",
+            exclude_venues=exclude_venues
+        )
+        return VenueSuggestResponse(
+            success=True,
+            venue=venue_data["venue"],
+            location=venue_data["location"],
+            title=venue_data["title"],
+            note=venue_data["note"],
+            city=venue_data["city"]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/", response_model=DateResponse, status_code=status.HTTP_201_CREATED)
 async def create_date(payload: DateCreate, current_user: dict = Depends(get_current_user)):

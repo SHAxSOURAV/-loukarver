@@ -15,6 +15,7 @@ from app.schemas.dates import (
 from app.core.websocket import ws_manager
 from app.services.notification import notification_service
 from app.schemas.notification import NotificationCreate, NotificationType, PresenceCreate
+from app.services.venue_service import venue_service
 
 def parse_date_time(date_str: str, time_str: str, tz_str: str) -> datetime:
     """Parses date and time strings into a UTC datetime object."""
@@ -71,6 +72,27 @@ class DateService:
             return user["partner"]["user_id"]
         return None
 
+    async def get_recent_venue_names(self, user_id: str, limit: int = 15) -> List[str]:
+        """Returns recent venue and title strings for the user/couple to prevent repetitive suggestions."""
+        try:
+            cursor = self.dates_collection.find(
+                {"$or": [{"creator_id": user_id}, {"partner_id": user_id}], "where": {"$exists": True}},
+                {"where": 1, "title": 1}
+            ).sort("created_at", -1).limit(limit)
+            docs = await cursor.to_list(length=limit)
+            venues = []
+            for d in docs:
+                w = d.get("where")
+                if w and not (w.lower().startswith("special ") and " date in " in w.lower()):
+                    venues.append(w)
+                t = d.get("title")
+                if t:
+                    venues.append(t)
+            return venues
+        except Exception as e:
+            print(f"Error fetching recent venues: {e}")
+            return []
+
     async def create_date(self, user_id: str, payload: DateCreate) -> Dict[str, Any]:
         partner_id = await self._get_partner_id(user_id)
         if not partner_id:
@@ -79,6 +101,21 @@ class DateService:
         utc_ts = parse_date_time(payload.date, payload.time, payload.timezone)
         
         new_doc = payload.model_dump()
+
+        # If a generic template string was passed (e.g. "Special romantic cozy date in Los Angeles"),
+        # automatically resolve it to an authentic real venue with specific title and note.
+        if payload.where and payload.where.lower().startswith("special ") and " date in " in payload.where.lower():
+            city = payload.city_name or "Los Angeles"
+            mood_str = payload.mood.value if payload.mood else "Romantic"
+            vibe_str = payload.vibe.value if payload.vibe else "Cozy"
+            recent_venues = await self.get_recent_venue_names(user_id)
+            rec = await venue_service.get_recommended_venue(city, mood_str, vibe_str, exclude_venues=recent_venues)
+            new_doc["where"] = rec["venue"]
+            if not new_doc.get("title"):
+                new_doc["title"] = rec["title"]
+            if not new_doc.get("note"):
+                new_doc["note"] = rec["note"]
+
         new_doc["creator_id"] = user_id
         new_doc["partner_id"] = partner_id
         new_doc["proposed_by"] = user_id
@@ -280,7 +317,29 @@ class DateService:
             raise ValueError("Date not found.")
 
         if doc["proposed_by"] == user_id:
-            raise ValueError("You cannot accept or reject a date that you proposed.")
+            if response.action in ["reject", "cancel"]:
+                updates = {"status": DateStatus.CANCELLED, "updated_at": datetime.now(timezone.utc)}
+                result = await self.dates_collection.find_one_and_update(
+                    {"_id": ObjectId(date_id)},
+                    {"$set": updates},
+                    return_document=True
+                )
+                target_id = doc["creator_id"] if user_id == doc["partner_id"] else doc["partner_id"]
+                try:
+                    await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
+                    await notification_service.schedule_notification(
+                        sender_id=user_id,
+                        payload=NotificationCreate(
+                            recipient_id=target_id,
+                            title="Date Proposal Cancelled",
+                            message="Your partner cancelled their date proposal.",
+                            type=NotificationType.SYSTEM
+                        )
+                    )
+                except Exception as e:
+                    print(f"Failed to notify partner on proposal cancel: {e}")
+                return await self._map_date(result, doc["timezone"])
+            raise ValueError("You cannot accept a date that you proposed.")
 
         if doc["status"] not in [DateStatus.PROPOSED, DateStatus.CANCEL_REQUESTED]:
             raise ValueError("Date is not currently proposed or cancel-requested.")
@@ -551,8 +610,8 @@ class DateService:
         if not doc:
             raise ValueError("Date not found.")
 
-        if doc["status"] != DateStatus.ACCEPTED:
-            raise ValueError("Only accepted dates can be cancelled.")
+        if doc["status"] not in [DateStatus.ACCEPTED, DateStatus.PROPOSED, DateStatus.CANCEL_REQUESTED]:
+            raise ValueError("Only proposed, accepted, or cancel-requested dates can be cancelled.")
 
         result = await self.dates_collection.find_one_and_update(
             {"_id": ObjectId(date_id)},
@@ -563,12 +622,13 @@ class DateService:
         target_id = doc["creator_id"] if user_id == doc["partner_id"] else doc["partner_id"]
         try:
             await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
+            cancel_msg = "Your partner has cancelled the date proposal." if doc["status"] == DateStatus.PROPOSED else "Your partner has cancelled the date."
             await notification_service.schedule_notification(
                 sender_id=user_id,
                 payload=NotificationCreate(
                     recipient_id=target_id,
                     title="Date Cancelled",
-                    message=f"Your partner has cancelled the date.",
+                    message=cancel_msg,
                     type=NotificationType.SYSTEM
                 )
             )

@@ -91,13 +91,23 @@ async def add_moment(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def _extract_partner_id(user: dict) -> Optional[str]:
+    if not user.get("is_aligned"):
+        return None
+    p = user.get("partner")
+    if isinstance(p, dict):
+        return p.get("user_id")
+    if isinstance(p, str):
+        return p
+    return None
+
 @router.get("/stats", response_model=MapStats)
 async def get_map_stats(
     timezone: str = Query("UTC", description="Your current IANA timezone (e.g. Asia/Dhaka)"),
     current_user: dict = Depends(get_current_user)
 ):
     """Get dashboard statistics for the map section."""
-    partner_id = current_user.get("partner", {}).get("user_id") if current_user.get("is_aligned") and current_user.get("partner") else None
+    partner_id = _extract_partner_id(current_user)
     return await map_service.get_stats(current_user["id"], partner_id=partner_id, user_doc=current_user)
 
 @router.get("/overview", response_model=MapOverview)
@@ -106,7 +116,7 @@ async def get_map_overview(
     current_user: dict = Depends(get_current_user)
 ):
     """Get data for map visualization, including places and calculated routes."""
-    partner_id = current_user.get("partner", {}).get("user_id") if current_user.get("is_aligned") and current_user.get("partner") else None
+    partner_id = _extract_partner_id(current_user)
     return await map_service.get_overview(current_user["id"], timezone, partner_id=partner_id)
 
 @router.post("/place/{place_id}/request-delete", response_model=Union[PlaceResponse, GenericResponse])

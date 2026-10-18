@@ -1,7 +1,10 @@
 import os
 import uuid
 import zoneinfo
-import httpx
+import urllib.request
+import urllib.parse
+import json
+import ssl
 import asyncio
 from typing import Dict, Any, List, Optional, Tuple
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -18,12 +21,44 @@ from app.schemas.map import (
 )
 from pymongo import ReturnDocument
 
+def _sync_geocode_maptiler(query: str, api_key: str) -> Optional[Tuple[float, float]]:
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://api.maptiler.com/geocoding/{encoded_query}.json?key={api_key}&limit=1"
+    req = urllib.request.Request(url, headers={"User-Agent": "AlignedTracker/1.0"})
+    with urllib.request.urlopen(req, timeout=3.0) as resp:
+        if resp.status == 200:
+            data = json.loads(resp.read().decode())
+            features = data.get("features", [])
+            if features and "geometry" in features[0]:
+                coords = features[0]["geometry"].get("coordinates", [])
+                if len(coords) >= 2:
+                    return float(coords[1]), float(coords[0])  # lat, lng
+    return None
+
+def _sync_geocode_nominatim(city: str, country: str) -> Optional[Tuple[float, float]]:
+    params = urllib.parse.urlencode({"q": f"{city}, {country}", "format": "json", "limit": "1"})
+    url = f"https://nominatim.openstreetmap.org/search?{params}"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AlignedTracker/1.0",
+        "Accept-Language": "en"
+    })
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    with urllib.request.urlopen(req, timeout=2.5, context=ctx) as resp:
+        if resp.status == 200:
+            data = json.loads(resp.read().decode())
+            if data and isinstance(data, list) and len(data) > 0:
+                return float(data[0]["lat"]), float(data[0]["lon"])
+    return None
+
 class MapService:
     def __init__(self) -> None:
         self.client = get_client()
         self.db = get_db()
         self.places_collection = self.db["map_places"]
         self.users = self.db["users"]
+        self._geocode_cache: Dict[str, Tuple[float, float]] = {}
 
     async def init_indexes(self):
         try:
@@ -36,9 +71,13 @@ class MapService:
             print(f"Index initialization note in map: {e}")
 
     async def _get_partner_id(self, user_id: str) -> Optional[str]:
-        user = await self.users.find_one({"_id": ObjectId(user_id)}, {"partner.user_id": 1, "is_aligned": 1})
+        user = await self.users.find_one({"_id": ObjectId(user_id)}, {"partner": 1, "is_aligned": 1})
         if user and user.get("is_aligned") and user.get("partner"):
-            return user["partner"]["user_id"]
+            partner_val = user["partner"]
+            if isinstance(partner_val, dict):
+                return partner_val.get("user_id")
+            elif isinstance(partner_val, str):
+                return partner_val
         return None
 
     async def _get_names(self, user_id: str, partner_id: str) -> Dict[str, str]:
@@ -55,39 +94,33 @@ class MapService:
         return names
 
     async def _geocode(self, city: str, country: str) -> Tuple[float, float]:
-        """Resilient geocoding with multiple providers and fast fallback."""
+        """Resilient, ultra-fast geocoding with MapTiler API and cache."""
         if not city or not country:
             return 0.0, 0.0
 
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AlignedTracker/1.0",
-            "Accept-Language": "en"
-        }
+        cache_key = f"{city.strip().lower()}_{country.strip().lower()}"
+        if cache_key in self._geocode_cache:
+            return self._geocode_cache[cache_key]
 
-        providers = [
-            # Provider 1: Nominatim (Primary)
-            {
-                "url": "https://nominatim.openstreetmap.org/search",
-                "params": {"q": f"{city}, {country}", "format": "json", "limit": 1}
-            },
-            # Provider 2: geocode.maps.co (Secondary Fallback)
-            {
-                "url": "https://geocode.maps.co/search",
-                "params": {"q": f"{city} {country}"}
-            }
-        ]
+        # 1. Primary: MapTiler Geocoding API (Fast sub-200ms lookup)
+        if getattr(settings, "MAPTILER_API_KEY", None):
+            try:
+                coords = await asyncio.to_thread(_sync_geocode_maptiler, f"{city}, {country}", settings.MAPTILER_API_KEY)
+                if coords:
+                    self._geocode_cache[cache_key] = coords
+                    return coords
+            except Exception as e:
+                print(f"MapTiler geocode fallback triggered: {e}")
 
-        async with httpx.AsyncClient(timeout=4.0, verify=False) as client:
-            for provider in providers:
-                try:
-                    response = await client.get(provider["url"], params=provider["params"], headers=headers)
-                    if response.status_code == 200:
-                        data = response.json()
-                        if data and isinstance(data, list) and len(data) > 0:
-                            return float(data[0]["lat"]), float(data[0]["lon"])
-                except Exception:
-                    continue
-        
+        # 2. Fallback: OpenStreetMap Nominatim
+        try:
+            coords = await asyncio.to_thread(_sync_geocode_nominatim, city, country)
+            if coords:
+                self._geocode_cache[cache_key] = coords
+                return coords
+        except Exception:
+            pass
+
         return 0.0, 0.0
 
     async def _async_repair_geocode(self, place_id: str, city: str, country: str):
@@ -107,7 +140,10 @@ class MapService:
         if not partner_id:
             raise ValueError("Partner alignment required.")
 
-        lat, lng = await self._geocode(payload.city, payload.country)
+        if payload.lat is not None and payload.lng is not None and (payload.lat != 0.0 or payload.lng != 0.0):
+            lat, lng = float(payload.lat), float(payload.lng)
+        else:
+            lat, lng = await self._geocode(payload.city, payload.country)
         
         new_doc = payload.model_dump()
         new_doc["creator_id"] = user_id
@@ -213,14 +249,19 @@ class MapService:
         return await self._map_place(result, payload.timezone, user_id)
 
     async def delete_place(self, place_id: str, user_id: str) -> bool:
+        try:
+            oid = ObjectId(place_id)
+        except Exception:
+            return False
+
         doc = await self.places_collection.find_one({
-            "_id": ObjectId(place_id),
+            "_id": oid,
             "$or": [{"creator_id": user_id}, {"partner_id": user_id}]
         })
         if not doc:
             return False
             
-        result = await self.places_collection.delete_one({"_id": ObjectId(place_id)})
+        result = await self.places_collection.delete_one({"_id": oid})
         
         if result.deleted_count > 0:
             partner_id = await self._get_partner_id(user_id)
@@ -231,8 +272,13 @@ class MapService:
         return False
 
     async def request_delete_place(self, place_id: str, user_id: str, user_timezone: str = "UTC") -> Dict[str, Any]:
+        try:
+            oid = ObjectId(place_id)
+        except Exception:
+            raise ValueError("Invalid place ID.")
+
         doc = await self.places_collection.find_one({
-            "_id": ObjectId(place_id),
+            "_id": oid,
             "$or": [{"creator_id": user_id}, {"partner_id": user_id}]
         })
         if not doc:
@@ -250,7 +296,7 @@ class MapService:
 
         if not has_partner_contribution:
             # Delete immediately
-            await self.places_collection.delete_one({"_id": ObjectId(place_id)})
+            await self.places_collection.delete_one({"_id": oid})
             if partner_id:
                 from app.core.websocket import ws_manager
                 await ws_manager.broadcast_to_user(partner_id, {"type": "MAP_UPDATED"})
@@ -267,7 +313,7 @@ class MapService:
         }
 
         result = await self.places_collection.find_one_and_update(
-            {"_id": ObjectId(place_id)},
+            {"_id": oid},
             {"$set": {"deletion_request": deletion_request}},
             return_document=ReturnDocument.AFTER
         )
@@ -279,14 +325,19 @@ class MapService:
         return await self._map_place(result, user_timezone, user_id)
 
     async def approve_delete_place(self, place_id: str, user_id: str) -> bool:
+        try:
+            oid = ObjectId(place_id)
+        except Exception:
+            return False
+
         doc = await self.places_collection.find_one({
-            "_id": ObjectId(place_id),
+            "_id": oid,
             "$or": [{"creator_id": user_id}, {"partner_id": user_id}]
         })
         if not doc or not doc.get("deletion_request"):
             return False
 
-        await self.places_collection.delete_one({"_id": ObjectId(place_id)})
+        await self.places_collection.delete_one({"_id": oid})
         
         partner_id = await self._get_partner_id(user_id)
         if partner_id:
@@ -295,15 +346,20 @@ class MapService:
         return True
 
     async def reject_delete_place(self, place_id: str, user_id: str, user_timezone: str = "UTC") -> Dict[str, Any]:
+        try:
+            oid = ObjectId(place_id)
+        except Exception:
+            raise ValueError("Invalid place ID.")
+
         doc = await self.places_collection.find_one({
-            "_id": ObjectId(place_id),
+            "_id": oid,
             "$or": [{"creator_id": user_id}, {"partner_id": user_id}]
         })
         if not doc or not doc.get("deletion_request"):
             raise ValueError("No pending deletion request found.")
 
         result = await self.places_collection.find_one_and_update(
-            {"_id": ObjectId(place_id)},
+            {"_id": oid},
             {"$unset": {"deletion_request": ""}},
             return_document=ReturnDocument.AFTER
         )
@@ -389,7 +445,7 @@ class MapService:
         user_ids = [user_id]
         if partner_id: user_ids.append(partner_id)
         
-        query = {"creator_id": {"$in": user_ids}}
+        query = {"$or": [{"creator_id": {"$in": user_ids}}, {"partner_id": {"$in": user_ids}}]}
         
         places_task = self.places_collection.find(query).sort("created_at", 1).to_list(length=None)
         names_task = self._get_names(user_id, partner_id or "")

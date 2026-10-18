@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     AWS_REGION: str = "eu-north-1"
     AWS_S3_BUCKET_NAME: str = ""
     
+    # MapTiler Configuration
+    MAPTILER_API_KEY: str = ""
+    
     # Read from .env if present
     model_config = SettingsConfigDict(
         env_file=".env",
