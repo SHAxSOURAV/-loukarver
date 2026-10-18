@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { View, Text, StyleSheet, DeviceEventEmitter } from 'react-native';
+import { View, Text, StyleSheet, DeviceEventEmitter, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { VibeTabParamList } from '../types';
 import { Colors } from '../constants/colors';
 import { Fonts } from '../constants/fonts';
 import { getPendingDatesCount } from '../services/vibeCheckApi';
-
+import { getMe } from '../services/authApi';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PlayScreen } from '../screens/vibecheck/PlayScreen';
 import { VCDatesScreen } from '../screens/vibecheck/VCDatesScreen';
 import { HistoryScreen } from '../screens/vibecheck/HistoryScreen';
 import { PulseScreen } from '../screens/vibecheck/PulseScreen';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const Tab = createBottomTabNavigator<VibeTabParamList>();
 
@@ -24,7 +25,29 @@ const NAV_ITEMS = [
 
 export function VibeTabs() {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<any>();
   const [pendingDatesCount, setPendingDatesCount] = useState(0);
+
+  const verifyNotAligned = async () => {
+    try {
+      const token = await AsyncStorage.getItem('access_token');
+      if (token) {
+        const user = await getMe();
+        if (user?.is_aligned || user?.partner) {
+          Alert.alert(
+            'Access Restricted',
+            'You are currently in an aligned relationship. Access to Vibe Check is locked unless your aligned connection is broken.'
+          );
+          navigation.reset({
+            index: 0,
+            routes: [{ name: 'AlignedApp' }],
+          });
+        }
+      }
+    } catch (e) {
+      console.log('Failed to verify alignment status in VibeTabs', e);
+    }
+  };
 
   const fetchPendingDates = async () => {
     try {
@@ -37,12 +60,15 @@ export function VibeTabs() {
   };
 
   useEffect(() => {
+    verifyNotAligned();
     fetchPendingDates();
     const sub = DeviceEventEmitter.addListener('REFRESH_VIBE_DATA', fetchPendingDates);
     const subClear = DeviceEventEmitter.addListener('CLEAR_DATES_BADGE', () => setPendingDatesCount(0));
+    const subAligned = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', verifyNotAligned);
     return () => {
       sub.remove();
       subClear.remove();
+      subAligned.remove();
     };
   }, []);
 

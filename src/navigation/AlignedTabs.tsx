@@ -9,7 +9,6 @@ import api from '../services/api';
 import { getMe } from '../services/authApi';
 
 import { HomeScreen } from '../screens/aligned/HomeScreen';
-import { ConnectScreen } from '../screens/aligned/ConnectScreen';
 import { DatesScreen } from '../screens/aligned/DatesScreen';
 import { ThreadScreen } from '../screens/aligned/ThreadScreen';
 import { FutureScreen } from '../screens/aligned/FutureScreen';
@@ -19,7 +18,6 @@ const Tab = createBottomTabNavigator<AlignedTabParamList>();
 
 const NAV_ITEMS = [
   { name: 'Home' as const, mark: '◐', label: 'Today' },
-  { name: 'Connect' as const, mark: '◈', label: 'Connect' },
   { name: 'Dates' as const, mark: '✦', label: 'Dates' },
   { name: 'Thread' as const, mark: '❦', label: 'Thread' },
   { name: 'Future' as const, mark: '◉', label: 'Future' },
@@ -85,25 +83,63 @@ function useGlobalWebSocket() {
               DeviceEventEmitter.emit('REFRESH_DATES_DATA');
             } else if (typeof data.type === 'string' && data.type.startsWith("SECRET_")) {
               DeviceEventEmitter.emit('REFRESH_SECRET_DATA');
+            } else if (data.type === "NEW_NOTIFICATION") {
+              const notif = data.notification || {};
+              DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
+                id: notif.id,
+                type: notif.type || 'Partner Update',
+                title: notif.title || 'Partner Activity',
+                message: notif.message || 'Your partner made a change',
+                metadata: notif.metadata || data.metadata || {},
+              });
+              DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
+              DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
+            } else if (data.type === "STATE_UPDATE" || data.type === "PULSE_UPDATED") {
+              DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
+                type: 'Mood Change',
+                title: 'Partner Update',
+                message: data.message || 'Your partner updated their mood or status',
+                metadata: data.data || {},
+              });
+              DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
+              DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
+            } else if (data.type === "ALIGNMENT_REQUEST_RECEIVED") {
+              DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
+                type: 'Alignment Request',
+                title: 'Alignment Request',
+                message: `${data.sender_name || 'Your partner'} sent you an alignment request!`,
+                metadata: data,
+              });
+              DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
+              DeviceEventEmitter.emit('ALIGNMENT_REQUEST_UPDATED', data);
+              DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
+            } else if (data.type === "ALIGNMENT_BONDED") {
+              DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
+                type: 'Alignment Connected!',
+                title: 'Aligned!',
+                message: 'You and your partner are now aligned!',
+                metadata: data,
+              });
+              DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
+              DeviceEventEmitter.emit('ALIGNMENT_BONDED', data);
+              DeviceEventEmitter.emit('ALIGNMENT_REQUEST_UPDATED', data);
+            } else if (data.type === "ALIGNMENT_BROKEN") {
+              DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
+                type: 'Partner Update',
+                title: 'Connection Broken',
+                message: 'Your aligned connection was disconnected.',
+                metadata: data,
+              });
+              DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
+              DeviceEventEmitter.emit('ALIGNMENT_BROKEN', data);
+              DeviceEventEmitter.emit('ALIGNMENT_REQUEST_UPDATED', data);
             } else if (
-              data.type === "ALIGNMENT_REQUEST_RECEIVED" ||
               data.type === "ALIGNMENT_REQUEST_SENT" ||
               data.type === "ALIGNMENT_REQUEST_CANCELLED" ||
-              data.type === "ALIGNMENT_REJECTED" ||
-              data.type === "ALIGNMENT_BONDED" || 
-              data.type === "ALIGNMENT_BROKEN" || 
-              data.type === "STATE_UPDATE" || 
-              data.type === "PULSE_UPDATED" ||
-              data.type === "NEW_NOTIFICATION"
+              data.type === "ALIGNMENT_REJECTED"
             ) {
               DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
               DeviceEventEmitter.emit('ALIGNMENT_REQUEST_UPDATED', data);
-              if (data.type === "ALIGNMENT_BONDED") {
-                DeviceEventEmitter.emit('ALIGNMENT_BONDED', data);
-              }
-              if (data.type === "ALIGNMENT_BROKEN") {
-                DeviceEventEmitter.emit('ALIGNMENT_BROKEN', data);
-              }
             }
           } catch (e) {
             console.log("Error parsing ws message", e);
@@ -184,7 +220,6 @@ export function AlignedTabs() {
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Connect" component={ConnectScreen} />
       <Tab.Screen name="Dates" component={DatesScreen} />
       <Tab.Screen name="Thread" component={ThreadScreen} />
       <Tab.Screen name="Future" component={FutureScreen} />

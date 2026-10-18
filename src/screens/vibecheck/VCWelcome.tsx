@@ -1,16 +1,42 @@
 import { SafeAreaView } from 'react-native-safe-area-context';
-import React from 'react';
-import { View, ScrollView, StyleSheet, Pressable } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { Colors } from '../../constants/colors';
 import { AppText } from '../../components/ui/AppText';
 import { RootStackParamList } from '../../types';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getMe } from '../../services/authApi';
 
 type Nav = StackNavigationProp<RootStackParamList>;
 
 export const VCWelcome: React.FC = () => {
   const nav = useNavigation<Nav>();
+
+  useEffect(() => {
+    const checkAlignment = async () => {
+      try {
+        const token = await AsyncStorage.getItem('access_token');
+        if (token) {
+          const user = await getMe();
+          if (user?.is_aligned || user?.partner) {
+            Alert.alert(
+              'Access Restricted',
+              'You are currently in an aligned relationship. Access to Vibe Check is locked unless your aligned connection is broken.'
+            );
+            nav.reset({
+              index: 0,
+              routes: [{ name: 'AlignedApp' }],
+            });
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    };
+    checkAlignment();
+  }, [nav]);
 
   return (
     <SafeAreaView style={styles.safe}>

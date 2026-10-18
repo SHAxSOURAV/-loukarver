@@ -57,12 +57,36 @@ export const changePassword = async (old_password, new_password) => {
   return response.data;
 };
 
-export const getMe = async () => {
-  const response = await api.get('/auth/me');
-  return response.data;
+let meCachePromise = null;
+let meCacheTime = 0;
+const ME_CACHE_TTL = 3000; // 3 seconds window to deduplicate concurrent component mounts
+
+export const clearMeCache = () => {
+  meCachePromise = null;
+  meCacheTime = 0;
+};
+
+export const getMe = async (forceRefresh = false) => {
+  const now = Date.now();
+  if (!forceRefresh && meCachePromise && now - meCacheTime < ME_CACHE_TTL) {
+    return meCachePromise;
+  }
+
+  meCacheTime = now;
+  meCachePromise = api
+    .get('/auth/me')
+    .then((res) => res.data)
+    .catch((err) => {
+      meCachePromise = null;
+      meCacheTime = 0;
+      throw err;
+    });
+
+  return meCachePromise;
 };
 
 export const deleteMe = async () => {
+  clearMeCache();
   const response = await api.delete('/auth/me');
   return response.data;
-};
+};

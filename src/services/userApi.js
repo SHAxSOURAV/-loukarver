@@ -35,14 +35,62 @@ export const updateUserProfile = async ({ name, gender }) => {
   return response.data;
 };
 
-export const getUserProfile = async () => {
-  const response = await api.get('/users');
-  return response.data;
+import { clearMeCache } from './authApi';
+
+let userProfileCachePromise = null;
+let userProfileCacheTime = 0;
+const USER_PROFILE_CACHE_TTL = 3000;
+
+export const clearUserProfileCache = () => {
+  userProfileCachePromise = null;
+  userProfileCacheTime = 0;
 };
 
-export const getPartnerProfile = async () => {
-  const response = await api.get('/users/partner');
-  return response.data;
+export const getUserProfile = async (forceRefresh = false) => {
+  const now = Date.now();
+  if (!forceRefresh && userProfileCachePromise && now - userProfileCacheTime < USER_PROFILE_CACHE_TTL) {
+    return userProfileCachePromise;
+  }
+
+  userProfileCacheTime = now;
+  userProfileCachePromise = api
+    .get('/users')
+    .then((res) => res.data)
+    .catch((err) => {
+      userProfileCachePromise = null;
+      userProfileCacheTime = 0;
+      throw err;
+    });
+
+  return userProfileCachePromise;
+};
+
+let partnerCachePromise = null;
+let partnerCacheTime = 0;
+const PARTNER_CACHE_TTL = 3000;
+
+export const clearPartnerCache = () => {
+  partnerCachePromise = null;
+  partnerCacheTime = 0;
+};
+
+export const getPartnerProfile = async (forceRefresh = false) => {
+  const now = Date.now();
+  if (!forceRefresh && partnerCachePromise && now - partnerCacheTime < PARTNER_CACHE_TTL) {
+    return partnerCachePromise;
+  }
+
+  partnerCacheTime = now;
+  partnerCachePromise = api
+    .get('/users/partner')
+    .then((res) => res.data)
+    .catch((err) => {
+      partnerCachePromise = null;
+      partnerCacheTime = 0;
+      throw err;
+    });
+
+  return partnerCachePromise;
 };
 
 export const uploadProfilePhoto = async (imageUri) => {
@@ -86,9 +134,11 @@ export const uploadProfilePhoto = async (imageUri) => {
     throw new Error(errorData.detail || `Upload failed with status ${response.status}`);
   }
 
+  // Clear in-memory caches so subsequent calls get the new profile photo
+  clearMeCache();
+  clearUserProfileCache();
+
   const result = await response.json();
-  const { DeviceEventEmitter } = await import('react-native');
-  DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
   return result;
 };
 

@@ -26,7 +26,7 @@ import ReportScreen from '../screens/ReportScreen';
 import ReportChatScreen from '../screens/ReportChatScreen';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getMe } from '../services/authApi';
-import { Platform } from 'react-native';
+import { Platform, DeviceEventEmitter } from 'react-native';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 
 const Stack = createStackNavigator<RootStackParamList>();
@@ -81,7 +81,6 @@ const linking = {
       AlignedApp: {
         screens: {
           Thread: 'thread/:activeCategory?',
-          Connect: 'connect',
           Dates: 'dates',
           Home: 'home',
           Map: 'map',
@@ -129,6 +128,28 @@ export default function RootNavigator() {
 
         OneSignal.Notifications.addEventListener('click', handleNotificationClick);
 
+        const handleForegroundNotification = (event: any) => {
+          try {
+            const notification = event?.getNotification ? event.getNotification() : event?.notification;
+            if (notification) {
+              const data = notification.additionalData || {};
+              DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
+                id: notification.notificationId,
+                type: data.type || 'Partner Update',
+                title: notification.title || 'Partner Activity',
+                message: notification.body || 'Your partner made a change',
+                metadata: data,
+              });
+              DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
+              DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
+            }
+          } catch (err) {
+            console.log('Error handling foreground notification:', err);
+          }
+        };
+
+        OneSignal.Notifications.addEventListener('foregroundWillDisplay', handleForegroundNotification);
+
         AsyncStorage.getItem('access_token').then((token) => {
           if (token) {
             getMe()
@@ -145,6 +166,7 @@ export default function RootNavigator() {
         return () => {
           try {
             OneSignal.Notifications.removeEventListener('click', handleNotificationClick);
+            OneSignal.Notifications.removeEventListener('foregroundWillDisplay', handleForegroundNotification);
           } catch (_) {}
         };
       }

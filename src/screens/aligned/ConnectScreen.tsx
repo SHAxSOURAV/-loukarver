@@ -244,14 +244,18 @@ export const ConnectScreen: React.FC = () => {
               .
             </AppText>
           </AppText>
-          <AppText
-            variant="serifItalic"
-            size={16}
-            color={Colors.muted}
-            style={{ lineHeight: 24, marginBottom: 20 }}
-          >
-            Things to do together — across distance.
-          </AppText>
+
+          {/* Things to do together - Hidden per client feedback */}
+          {false && (
+            <>
+              <AppText
+                variant="serifItalic"
+                size={16}
+                color={Colors.muted}
+                style={{ lineHeight: 24, marginBottom: 20 }}
+              >
+                Things to do together — across distance.
+              </AppText>
 
           <AppText
             style={{
@@ -458,6 +462,8 @@ export const ConnectScreen: React.FC = () => {
                   </View>
                 </Pressable>
               ))}
+            </>
+          )}
             </>
           )}
 

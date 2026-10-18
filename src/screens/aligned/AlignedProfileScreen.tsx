@@ -365,6 +365,7 @@ export const AlignedProfileScreen: React.FC = () => {
       await breakAlignment(breakPassword);
       setBreakSheet(false);
       setBreakPassword('');
+      await fetchUserData();
       DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
       CustomAlert.alert('Alignment Broken', 'You have successfully unaligned with your partner.');
     } catch (error: any) {
@@ -564,20 +565,47 @@ export const AlignedProfileScreen: React.FC = () => {
           </Pressable>
 
           {/* Mode Switch Card */}
-          <Pressable
-            style={styles.blackCard}
-            onPress={() => switchToVibeCheck('up')}
-          >
-            <View>
-              <AppText variant="display" size={20} color={Colors.bone}>
-                Flip to vibe check.
-              </AppText>
-              <AppText variant="mono" size={11} color={Colors.muted} style={{ marginTop: 4 }}>
-                The other side — for figuring it out
-              </AppText>
-            </View>
-            <AppText color={Colors.accent} size={18}>→</AppText>
-          </Pressable>
+          {isConnected ? (
+            <Pressable
+              style={[styles.blackCard, { opacity: 0.65 }]}
+              onPress={() => {
+                CustomAlert.alert(
+                  'Vibe Check Locked',
+                  'You are currently in an aligned relationship. You cannot access Vibe Check unless you break your aligned connection below.'
+                );
+              }}
+            >
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <AppText variant="display" size={20} color={Colors.bone}>
+                    Flip to vibe check.
+                  </AppText>
+                  <AppText variant="mono" size={10} color={Colors.accent}>
+                    [LOCKED]
+                  </AppText>
+                </View>
+                <AppText variant="mono" size={11} color={Colors.muted} style={{ marginTop: 4 }}>
+                  Unavailable while aligned. Break alignment below to access.
+                </AppText>
+              </View>
+              <AppText size={16}>🔒</AppText>
+            </Pressable>
+          ) : (
+            <Pressable
+              style={styles.blackCard}
+              onPress={() => switchToVibeCheck('up')}
+            >
+              <View>
+                <AppText variant="display" size={20} color={Colors.bone}>
+                  Flip to vibe check.
+                </AppText>
+                <AppText variant="mono" size={11} color={Colors.muted} style={{ marginTop: 4 }}>
+                  The other side — for figuring it out
+                </AppText>
+              </View>
+              <AppText color={Colors.accent} size={18}>→</AppText>
+            </Pressable>
+          )}
 
           <Pressable style={styles.menuItem} onPress={() => setSignoutSheet(true)}>
             <View>

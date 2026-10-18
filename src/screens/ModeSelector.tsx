@@ -1,6 +1,6 @@
 import { SafeAreaView } from 'react-native-safe-area-context';
 import React, { useState, useEffect } from "react";
-import { View, ScrollView, StyleSheet, Pressable } from 'react-native';
+import { View, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { StackNavigationProp } from "@react-navigation/stack";
 import { Colors } from "../constants/colors";
@@ -18,6 +18,24 @@ export const ModeSelector: React.FC = () => {
   const route = useRoute<ModeRoute>();
   const [loadingAligned, setLoadingAligned] = useState(false);
   const [loadingVibe, setLoadingVibe] = useState(false);
+  const [isAlignedUser, setIsAlignedUser] = useState(false);
+
+  useEffect(() => {
+    const checkUserAlignment = async () => {
+      try {
+        const token = await AsyncStorage.getItem('access_token');
+        if (token) {
+          const user = await getMe();
+          if (user?.is_aligned || user?.partner) {
+            setIsAlignedUser(true);
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    };
+    checkUserAlignment();
+  }, []);
 
   useEffect(() => {
     if (route.params?.autoSelect === 'vibe') {
@@ -35,7 +53,24 @@ export const ModeSelector: React.FC = () => {
         nav.navigate('Login', { returnTo: 'vibe' });
         return;
       }
+      const user = await getMe();
+      if (user?.is_aligned || user?.partner) {
+        setIsAlignedUser(true);
+        Alert.alert(
+          'Vibe Check Locked',
+          'You are currently in an aligned relationship. You cannot access Vibe Check unless you break your aligned connection in Aligned settings.'
+        );
+        return;
+      }
       const status = await checkVibeStatus();
+      if (status.is_aligned) {
+        setIsAlignedUser(true);
+        Alert.alert(
+          'Vibe Check Locked',
+          'You are currently in an aligned relationship. You cannot access Vibe Check unless you break your aligned connection in Aligned settings.'
+        );
+        return;
+      }
       if (status.success) {
         nav.navigate("VibeApp");
       } else {
@@ -45,6 +80,12 @@ export const ModeSelector: React.FC = () => {
       console.log("Error checking vibe status:", error);
       if (error?.response?.status === 401) {
         nav.navigate('Login', { returnTo: 'vibe' });
+      } else if (error?.response?.status === 403) {
+        setIsAlignedUser(true);
+        Alert.alert(
+          'Access Restricted',
+          error?.response?.data?.detail || 'You cannot access Vibe Check while aligned.'
+        );
       } else {
         nav.navigate("VibeOnboarding");
       }
@@ -151,17 +192,24 @@ export const ModeSelector: React.FC = () => {
             </Pressable>
 
             <Pressable
-              style={({ pressed }) => [styles.card, pressed && styles.pressed, loadingVibe && { opacity: 0.5 }]}
+              style={({ pressed }) => [
+                styles.card, 
+                isAlignedUser && { opacity: 0.65 },
+                pressed && styles.pressed, 
+                loadingVibe && { opacity: 0.5 }
+              ]}
               onPress={handleVibePress}
               disabled={loadingVibe}
             >
-              <AppText
-                variant="smallCaps"
-                color={Colors.accent}
-                style={{ marginBottom: 10 }}
-              >
-                If you're figuring it out
-              </AppText>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <AppText
+                  variant="smallCaps"
+                  color={isAlignedUser ? Colors.muted : Colors.accent}
+                >
+                  {isAlignedUser ? "Locked while aligned" : "If you're figuring it out"}
+                </AppText>
+                {isAlignedUser && <AppText size={14}>🔒</AppText>}
+              </View>
               <AppText variant="display" size={30} style={{ marginBottom: 4 }}>
                 vibe check
                 <AppText size={30} color={Colors.accent}>
@@ -174,7 +222,9 @@ export const ModeSelector: React.FC = () => {
                 color={Colors.muted}
                 style={{ lineHeight: 22 }}
               >
-                A daily card. Match with someone to find out what this is.
+                {isAlignedUser
+                  ? "Access is locked while you are aligned. Break your aligned connection in Aligned to access."
+                  : "A daily card. Match with someone to find out what this is."}
               </AppText>
             </Pressable>
           </View>

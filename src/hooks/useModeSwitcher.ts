@@ -1,3 +1,4 @@
+import { Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -44,7 +45,25 @@ export function useModeSwitcher() {
         nav.navigate('Login', { returnTo: 'vibe' });
         return;
       }
+
+      const user = await getMe();
+      if (user?.is_aligned || user?.partner) {
+        Alert.alert(
+          'Vibe Check Locked',
+          'You are currently in an aligned relationship. You cannot access Vibe Check unless you break your aligned connection in Aligned settings.'
+        );
+        return;
+      }
+
       const status = await checkVibeStatus();
+      if (status.is_aligned) {
+        Alert.alert(
+          'Vibe Check Locked',
+          'You are currently in an aligned relationship. You cannot access Vibe Check unless you break your aligned connection in Aligned settings.'
+        );
+        return;
+      }
+
       if (status.success) {
         nav.navigate('VibeApp' as any, { direction });
       } else {
@@ -54,6 +73,11 @@ export function useModeSwitcher() {
       console.log('Error switching to vibe check:', error);
       if (error?.response?.status === 401) {
         nav.navigate('Login', { returnTo: 'vibe' });
+      } else if (error?.response?.status === 403) {
+        Alert.alert(
+          'Access Restricted',
+          error?.response?.data?.detail || 'You cannot access Vibe Check while aligned.'
+        );
       } else {
         nav.navigate('VibeOnboarding');
       }

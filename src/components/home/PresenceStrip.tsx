@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, StyleSheet, Pressable, ScrollView, Image, DeviceEventEmitter, Alert, Platform, useWindowDimensions } from 'react-native';
 import { Colors } from '../../constants/colors';
 import { AppText } from '../ui/AppText';
@@ -14,7 +14,7 @@ import { AppButton } from '../ui/AppButton';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { Swipeable } from 'react-native-gesture-handler';
-import { markNotificationSeen, markNotificationUnread, deleteNotification, hideNotification, unhideNotification, clearAllNotifications } from '../../services/notificationApi';
+import { markNotificationSeen, markAllNotificationsSeen, markNotificationUnread, deleteNotification, hideNotification, unhideNotification, clearAllNotifications } from '../../services/notificationApi';
 import QRCode from 'react-native-qrcode-svg';
 import { useNavigation } from '@react-navigation/native';
 
@@ -41,6 +41,7 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
     outgoing: any | null;
   }>({ incoming: null, incoming_list: [], outgoing: null });
   const [qrSheet, setQrSheet] = useState(false);
+  const [now, setNow] = useState<Date>(new Date());
   const nav = useNavigation<any>();
 
   const fetchPresenceData = async () => {
@@ -75,11 +76,11 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
 
       if (notificationsRes.success && notificationsRes.data) {
         const presenceOnly = notificationsRes.data.filter((n: any) => [
-          'Partner Check-in', 'Ritual Completed', 'Proposal', 'Reunion', 'Mood Change',
+          'Presence', 'Partner Check-in', 'Ritual Completed', 'Proposal', 'Reunion', 'Mood Change',
           'Cycle Update', 'Browse Ideas', 'Thinking of You', 'Watch Together',
           'Confidential Message', 'Date Added', 'Milestone Step', 'Us Section Update',
           'Map Create', 'Map Delete', 'Thread Message', 'Milestone', 'Map Update', 'State Update',
-          'Alignment Request', 'Alignment Connected!'
+          'Alignment Request', 'Alignment Connected!', 'Trip Reminder', 'Anniversary', 'System'
         ].includes(n.type));
         setPresenceNotifications(presenceOnly);
       }
@@ -88,44 +89,66 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
     }
   };
 
+  const fetchTimeout = useRef<any>(null);
+  const debouncedFetchPresenceData = useCallback(() => {
+    if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
+    fetchTimeout.current = setTimeout(() => {
+      fetchPresenceData();
+    }, 300);
+  }, []);
+
   useEffect(() => {
     fetchPresenceData();
 
     const sub1 = DeviceEventEmitter.addListener('OPEN_PRESENCE_HISTORY', () => {
       setIsSheetOpen(true);
     });
-    const sub2 = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', () => {
-      fetchPresenceData();
-    });
-    const sub3 = DeviceEventEmitter.addListener('ALIGNMENT_REQUEST_UPDATED', () => {
-      fetchPresenceData();
-    });
-    const sub4 = DeviceEventEmitter.addListener('ALIGNMENT_BONDED', () => {
-      fetchPresenceData();
-    });
-    const sub5 = DeviceEventEmitter.addListener('ALIGNMENT_BROKEN', () => {
-      fetchPresenceData();
-    });
+    const sub2 = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', debouncedFetchPresenceData);
+    const sub3 = DeviceEventEmitter.addListener('ALIGNMENT_REQUEST_UPDATED', debouncedFetchPresenceData);
+    const sub4 = DeviceEventEmitter.addListener('ALIGNMENT_BONDED', debouncedFetchPresenceData);
+    const sub5 = DeviceEventEmitter.addListener('ALIGNMENT_BROKEN', debouncedFetchPresenceData);
     const sub6 = DeviceEventEmitter.addListener('QR_CODE_SCANNED', (data: string) => {
       if (data) {
         handleSendRequest(data);
       }
     });
 
+    const sub7 = DeviceEventEmitter.addListener('PRESENCE_TRACKED', debouncedFetchPresenceData);
+
     const t = setInterval(() => {
       fetchPresenceData(); // Refresh every minute
     }, 60_000);
 
+    const clockTimer = setInterval(() => {
+      setNow(new Date());
+    }, 30_000);
+
     return () => {
+      if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
       clearInterval(t);
+      clearInterval(clockTimer);
       sub1.remove();
       sub2.remove();
       sub3.remove();
       sub4.remove();
       sub5.remove();
       sub6.remove();
+      sub7.remove();
     };
-  }, [refreshTrigger]);
+  }, [debouncedFetchPresenceData, refreshTrigger]);
+
+  // When presence history sheet opens, mark all unread notifications as seen immediately!
+  useEffect(() => {
+    if (isSheetOpen) {
+      markAllNotificationsSeen()
+        .then(() => {
+          setPresenceNotifications(prev => prev.map(n => ({ ...n, status: 'Seen' })));
+          DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
+          DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
+        })
+        .catch(err => console.log('Error auto-marking notifications as seen:', err));
+    }
+  }, [isSheetOpen]);
 
   const handleSendRequest = async (keyToSend?: string) => {
     const key = (keyToSend || inputKey).trim().toUpperCase();
@@ -392,7 +415,6 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
   }
 
   // Calculate dot color and active status string based on last_active_at
-  const now = new Date();
   let dotColor: string = Colors.accent; // Default red
   let isOnline = false;
   let activeStatusStr = '○ AWAY';
@@ -429,7 +451,8 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
 
   const partnerTz = partner.timezone || latestPresence?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
-  let locationStr = partner.location_city ? partner.location_city.toUpperCase() : '';
+  const partnerCity = partner.location_city || partner.city_name || '';
+  let locationStr = partnerCity ? partnerCity.toUpperCase() : '';
   if (!locationStr && partnerTz) {
     const tzParts = partnerTz.split('/');
     if (tzParts.length > 1) {
@@ -559,6 +582,7 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
                     try {
                       await clearAllNotifications();
                       setPresenceNotifications([]);
+                      DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
                       DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
                     } catch (e) {
                       console.log("Error clearing notifications:", e);
@@ -658,6 +682,7 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
                               if (index > -1) newList[index] = { ...newList[index], status: "Seen" };
                               return newList;
                             });
+                            DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
                             DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
                           }
                           if (n.type === 'Partner Check-in') {
@@ -677,7 +702,7 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
                           <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
                             {isUnread && <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.accent, marginRight: 6, marginTop: 2 }} />}
                             <AppText variant="serifItalic" size={16} color={Colors.ink} style={{ fontWeight: isUnread ? "bold" : "normal" }}>
-                              {n.message}
+                              {n.type === 'Presence' && !n.message.toLowerCase().includes(partnerName.toLowerCase()) ? `${partnerName} is ${n.message}` : n.message}
                             </AppText>
                           </View>
                           <AppText variant="mono" color={Colors.muted} style={{ fontSize: 11, marginLeft: 8, paddingTop: 4 }}>

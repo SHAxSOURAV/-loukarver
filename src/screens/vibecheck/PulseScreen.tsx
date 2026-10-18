@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, ScrollView, StyleSheet, Pressable, Alert, DeviceEventEmitter } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { Colors } from '../../constants/colors';
 import { AppText } from '../../components/ui/AppText';
 import { AppButton } from '../../components/ui/AppButton';
@@ -36,6 +37,7 @@ const getStageStatus = (index: number) => {
 };
 
 export const PulseScreen: React.FC = () => {
+  const navigation = useNavigation<any>();
   const [section, setSection] = useState<'overview' | 'ladder' | 'patterns' | 'flags'>('overview');
   const [partnerFlags, setPartnerFlags] = useState<any[]>([]);
   const [flagTab, setFlagTab] = useState<'mine' | 'partner'>('mine');
@@ -117,6 +119,14 @@ export const PulseScreen: React.FC = () => {
       if (alignRes.success) {
          setIsAligned(alignRes.is_aligned);
          setAlignedMessage(alignRes.message);
+         if (alignRes.is_aligned) {
+           Alert.alert(
+             'Mutually Aligned! 🎉',
+             `You and ${partnerName} are now officially Aligned! Access to Vibe Check is locked while aligned. Transitioning to Aligned...`,
+             [{ text: 'Go to Aligned', onPress: () => navigation.navigate('AlignedApp' as any) }]
+           );
+           return;
+         }
       }
     } catch (e) {}
     
@@ -155,6 +165,16 @@ export const PulseScreen: React.FC = () => {
     setConfirmAlignedSheet(false);
     try {
       await setVibePulse(partnerId, getStageStatus(alignedTargetIndex));
+      const alignRes = await checkAlignedConnection(partnerId);
+      if (alignRes.success && alignRes.is_aligned) {
+        setIsAligned(true);
+        Alert.alert(
+          'Mutually Aligned! 🎉',
+          `You and ${partnerName} are now officially Aligned! Access to Vibe Check is locked while aligned. Transitioning to Aligned...`,
+          [{ text: 'Go to Aligned', onPress: () => navigation.navigate('AlignedApp' as any) }]
+        );
+        return;
+      }
       loadPulseData(partnerId);
     } catch (e: any) {
       const msg = e?.response?.data?.detail || 'Could not save your stage.';

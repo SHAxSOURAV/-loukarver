@@ -7,7 +7,6 @@ import { BottomSheet } from "@/components/ui/BottomSheet";
 import { AppTextInput } from "@/components/ui/AppTextInput";
 import { Calendar, DateData } from "react-native-calendars";
 import { Ionicons } from "@expo/vector-icons";
-import Confidential from "./Confidential";
 import { pokePartner, getInteractions } from "../../services/interactionsApi";
 import { createWatchSession, getWatchSessions, acceptWatchSession, setReadyWatchSession, triggerPlayWatchSession, deleteWatchSession } from "../../services/watchApi";
 import { triggerNotification } from "../../services/notificationApi";
@@ -97,20 +96,21 @@ const Moment: React.FC = () => {
     loadAll();
     checkAlignment();
 
-    const sub1 = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', () => {
-      loadAll();
-      checkAlignment();
-    });
-    const sub2 = DeviceEventEmitter.addListener('ALIGNMENT_BONDED', () => {
-      loadAll();
-      checkAlignment();
-    });
-    const sub3 = DeviceEventEmitter.addListener('ALIGNMENT_BROKEN', () => {
-      loadAll();
-      checkAlignment();
-    });
+    let debounceTimer: any = null;
+    const debouncedRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadAll();
+        checkAlignment();
+      }, 300);
+    };
+
+    const sub1 = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', debouncedRefresh);
+    const sub2 = DeviceEventEmitter.addListener('ALIGNMENT_BONDED', debouncedRefresh);
+    const sub3 = DeviceEventEmitter.addListener('ALIGNMENT_BROKEN', debouncedRefresh);
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       sub1.remove();
       sub2.remove();
       sub3.remove();
@@ -284,8 +284,6 @@ const Moment: React.FC = () => {
       <AppText variant="serifItalic" size={14} color={Colors.muted} style={styles.footerText}>
         Things that exist in the present — they don't get saved.
       </AppText>
-
-      <Confidential />
 
       <BottomSheet
         open={activeSheet === "watchTogether"}

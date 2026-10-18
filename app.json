@@ -21,6 +21,7 @@
         "NSCameraUsageDescription": "Allow Samesy to access your camera to scan pairing QR codes.",
         "NSPhotoLibraryUsageDescription": "Allow Samesy to access your photo library for profile photos and shared memories.",
         "NSMicrophoneUsageDescription": "Allow Samesy to access your microphone for voice notes.",
+        "NSLocationWhenInUseUsageDescription": "Allow Samesy to access your location to show your accurate local time and city to your partner.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -33,18 +34,27 @@
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
         "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
         "android.permission.READ_MEDIA_IMAGES",
         "android.permission.READ_MEDIA_VIDEO",
         "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS"
       ]
     },
     "plugins": [
       "expo-font",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Samesy to access your location to show your accurate local time and city to your partner."
+        }
+      ],
       [
         "expo-media-library",
         {

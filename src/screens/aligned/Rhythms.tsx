@@ -154,9 +154,20 @@ const Rhythms: React.FC = () => {
       }
     };
     loadData();
-    
-    const sub = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', loadData);
-    return () => sub.remove();
+
+    let debounceTimer: any = null;
+    const debouncedLoad = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadData();
+      }, 300);
+    };
+
+    const sub = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', debouncedLoad);
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      sub.remove();
+    };
   }, []);
 
   const handleUpdateCycle = async (day: DateData) => {

@@ -178,21 +178,30 @@ const UsSection: React.FC<UsSectionProps> = ({ refreshTrigger = 0 }) => {
     setIsLoading(false);
   }, []);
 
+  const loadTimeoutRef = useRef<any>(null);
+  const debouncedLoadData = useCallback(() => {
+    if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
+    loadTimeoutRef.current = setTimeout(() => {
+      loadData();
+    }, 300);
+  }, [loadData]);
+
   useEffect(() => {
     loadData();
 
-    const sub1 = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', loadData);
-    const sub2 = DeviceEventEmitter.addListener('US_SECTION_UPDATED', loadData);
-    const sub3 = DeviceEventEmitter.addListener('ALIGNMENT_BONDED', loadData);
-    const sub4 = DeviceEventEmitter.addListener('ALIGNMENT_BROKEN', loadData);
+    const sub1 = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', debouncedLoadData);
+    const sub2 = DeviceEventEmitter.addListener('US_SECTION_UPDATED', debouncedLoadData);
+    const sub3 = DeviceEventEmitter.addListener('ALIGNMENT_BONDED', debouncedLoadData);
+    const sub4 = DeviceEventEmitter.addListener('ALIGNMENT_BROKEN', debouncedLoadData);
 
     return () => {
+      if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
       sub1.remove();
       sub2.remove();
       sub3.remove();
       sub4.remove();
     };
-  }, [loadData, refreshTrigger]);
+  }, [debouncedLoadData, loadData, refreshTrigger]);
 
   const handleMarkedDayPress = (day: DateData) => {
     setMarkedDayDate(day.dateString);
@@ -386,33 +395,36 @@ const UsSection: React.FC<UsSectionProps> = ({ refreshTrigger = 0 }) => {
         {activeUsTab === "TIME" && (
           <View style={styles.timeTab}>
             <View style={[styles.card, { marginTop: 10 }]}>
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "baseline",
-                  gap: 12,
-                }}
-              >
-                <AppText variant="display" size={90} style={{ lineHeight: 80 }}>
+              <View style={styles.daysCounterRow}>
+                <AppText
+                  variant="display"
+                  size={totalDays >= 1000 ? 54 : totalDays >= 100 ? 64 : 74}
+                  style={[
+                    styles.daysNumber,
+                    { lineHeight: totalDays >= 1000 ? 58 : totalDays >= 100 ? 68 : 78 },
+                  ]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                >
                   {totalDays}
                 </AppText>
-                <View>
-                  <AppText variant="serifItalic" size={22} color={Colors.muted}>
+                <View style={styles.daysLabelCol}>
+                  <AppText variant="serifItalic" size={20} color={Colors.muted} style={styles.daysText}>
                     days
                   </AppText>
-                  <AppText variant="smallCaps" color={Colors.accent}>
+                  <AppText variant="smallCaps" color={Colors.accent} size={11} style={styles.countingText}>
                     & counting
                   </AppText>
                 </View>
               </View>
               <AppText
                 variant="serifItalic"
-                size={15}
+                size={14}
                 color={Colors.muted}
-                style={{ marginTop: 12 }}
+                style={{ marginTop: 10, lineHeight: 20 }}
               >
                 Since{" "}
-                <AppText variant="serifItalic" size={15} color={Colors.ink}>
+                <AppText variant="serifItalic" size={14} color={Colors.ink}>
                   {formatReadableDate(relationshipStartDate)}
                 </AppText>{" "}
                 — the day it all began.
@@ -432,13 +444,13 @@ const UsSection: React.FC<UsSectionProps> = ({ refreshTrigger = 0 }) => {
                     index < array.length - 1 && styles.milestoneBorder,
                   ]}
                 >
-                  <AppText variant="display" size={32}>
+                  <AppText variant="display" size={28} numberOfLines={1} adjustsFontSizeToFit>
                     {value}
                   </AppText>
                   <AppText
                     variant="mono"
                     color={Colors.muted}
-                    style={{ fontSize: 10, marginTop: 4, textAlign: 'center', lineHeight: 14 }}
+                    style={{ fontSize: 9.5, marginTop: 4, textAlign: 'center', lineHeight: 13 }}
                   >
                     {label}
                   </AppText>
@@ -934,20 +946,40 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 3,
   },
 
-  timeTab: { padding: 10 },
+  timeTab: { paddingHorizontal: 12, paddingVertical: 10 },
+  daysCounterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  daysNumber: {
+    flexShrink: 1,
+  },
+  daysLabelCol: {
+    flexShrink: 0,
+    justifyContent: "center",
+  },
+  daysText: {
+    lineHeight: 22,
+  },
+  countingText: {
+    letterSpacing: 0.8,
+    lineHeight: 14,
+    marginTop: 2,
+  },
   milestoneRow: {
     flexDirection: "row",
-    marginTop: 32,
-    marginHorizontal: 10,
+    marginTop: 24,
+    marginHorizontal: 4,
   },
 
   milestoneBox1: {
     flex: 1,
-    paddingVertical: 16,
+    paddingVertical: 14,
     alignItems: "center",
     borderTopWidth: 1,
     borderColor: Colors.rule,
-    paddingHorizontal: 10,
+    paddingHorizontal: 4,
   },
 
   milestoneBorder: {
@@ -974,7 +1006,8 @@ const styles = StyleSheet.create({
 
   card: {
     borderRadius: 14,
-    padding: 15,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
 
   sheetLabel: { fontSize: 12, marginBottom: 8 },

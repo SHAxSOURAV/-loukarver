@@ -9,12 +9,28 @@ import { AppText } from '../../components/ui/AppText';
 import { AppButton } from '../../components/ui/AppButton';
 import * as ImagePicker from 'expo-image-picker';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from 'expo-screen-capture';
-import { uploadSecret, getReceivedSecrets, getSentSecrets, getSecretViewUrl, requestRewatchSecret, approveRewatchSecret, declineRewatchSecret, revokeSecret } from '../../services/secretApi';
+import { uploadSecret, getReceivedSecrets, getSentSecrets, getSecretViewUrl, getSecretViewInfo, requestRewatchSecret, approveRewatchSecret, declineRewatchSecret, revokeSecret } from '../../services/secretApi';
 import { triggerNotification } from '../../services/notificationApi';
 import { getMe } from '../../services/authApi';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Ionicons } from '@expo/vector-icons';
 import ReAnimated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Camera } from 'expo-camera';
+import { BottomSheet } from '../../components/ui/BottomSheet';
+import * as FileSystem from 'expo-file-system/legacy';
+import { ProfessionalVideoPlayer } from '../../components/ui/ProfessionalVideoPlayer';
+
+const isCurrentMediaVideo = (secret: any, uri: string | null): boolean => {
+  return !!(
+    secret?.file_type?.startsWith('video') ||
+    secret?.filename?.endsWith('.mp4') ||
+    secret?.filename?.endsWith('.mov') ||
+    uri?.includes('.mp4') ||
+    uri?.includes('.mov') ||
+    uri?.startsWith('data:video')
+  );
+};
 
 const Confidential: React.FC = () => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -22,7 +38,10 @@ const Confidential: React.FC = () => {
   const [secrets, setSecrets] = useState<any[]>([]);
   const [sentSecrets, setSentSecrets] = useState<any[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadMediaType, setUploadMediaType] = useState<'photo' | 'video'>('video');
   const [isAligned, setIsAligned] = useState<boolean>(true);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [viewingSecret, setViewingSecret] = useState<any | null>(null);
   const [mediaDataUri, setMediaDataUri] = useState<string | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
@@ -132,11 +151,14 @@ const Confidential: React.FC = () => {
     });
   };
 
-  // Start 10s timer for images
+  // Start timer for media (10s for images only)
   useEffect(() => {
     if (viewingSecret && mediaDataUri) {
-      progress.setValue(1);
-      startTimer(10000);
+      const isVideo = isCurrentMediaVideo(viewingSecret, mediaDataUri);
+      if (!isVideo) {
+        progress.setValue(1);
+        startTimer(10000);
+      }
     }
   }, [viewingSecret, mediaDataUri]);
 
@@ -147,9 +169,12 @@ const Confidential: React.FC = () => {
 
   const handleResume = () => {
     setIsPaused(false);
-    progress.stopAnimation((value) => {
-      startTimer(value * 10000);
-    });
+    const isVideo = isCurrentMediaVideo(viewingSecret, mediaDataUri);
+    if (!isVideo) {
+      progress.stopAnimation((value) => {
+        startTimer(value * 10000);
+      });
+    }
   };
 
   const parseUtcDate = (dateStr: string | null) => {
@@ -190,22 +215,23 @@ const Confidential: React.FC = () => {
     fetchToken();
     loadSecrets();
     checkAlignment();
-    
-    const sub1 = DeviceEventEmitter.addListener('REFRESH_SECRET_DATA', loadSecrets);
-    const sub2 = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', () => {
-      loadSecrets();
-      checkAlignment();
-    });
-    const sub3 = DeviceEventEmitter.addListener('ALIGNMENT_BONDED', () => {
-      loadSecrets();
-      checkAlignment();
-    });
-    const sub4 = DeviceEventEmitter.addListener('ALIGNMENT_BROKEN', () => {
-      loadSecrets();
-      checkAlignment();
-    });
+
+    let debounceTimer: any = null;
+    const debouncedRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadSecrets();
+        checkAlignment();
+      }, 300);
+    };
+
+    const sub1 = DeviceEventEmitter.addListener('REFRESH_SECRET_DATA', debouncedRefresh);
+    const sub2 = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', debouncedRefresh);
+    const sub3 = DeviceEventEmitter.addListener('ALIGNMENT_BONDED', debouncedRefresh);
+    const sub4 = DeviceEventEmitter.addListener('ALIGNMENT_BROKEN', debouncedRefresh);
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       sub1.remove();
       sub2.remove();
       sub3.remove();
@@ -213,43 +239,171 @@ const Confidential: React.FC = () => {
     };
   }, []);
 
-  const handleCompose = async () => {
+  const handleCompose = () => {
     if (!isAligned) {
       CustomAlert.alert(
         "Partner Required",
-        "Please connect with your partner first to send confidential photos."
+        "Please connect with your partner first to send confidential photos and videos."
       );
       return;
     }
+    setPickerOpen(true);
+  };
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.8,
-    });
+  const getVideoDurationInSeconds = (asset: any): number | null => {
+    if (typeof asset?.duration === 'number' && asset.duration > 0) {
+      // Android/iOS native duration is in milliseconds; web HTML5 is in seconds
+      return asset.duration > 1000 ? asset.duration / 1000 : asset.duration;
+    }
+    return null;
+  };
 
-    if (!result.canceled && result.assets && result.assets.length > 0) {
-      const asset = result.assets[0];
+  const processAndUploadSecret = async (uri: string, mimeType: string, filename: string, isVideo: boolean = false) => {
+    setIsUploading(true);
+    setUploadProgress(0);
+    setUploadMediaType(isVideo ? 'video' : 'photo');
+    try {
+      await uploadSecret(uri, mimeType, filename, (percent: number) => {
+        setUploadProgress(percent);
+      });
+      setUploadProgress(100);
+      triggerNotification(
+        "Confidential Message",
+        isVideo ? "Sent a confidential video" : "Sent a confidential secret"
+      ).catch(() => {});
+      CustomAlert.alert(
+        "Delivered",
+        isVideo ? "Confidential video sent successfully!" : "Secret photo sent successfully!"
+      );
+      loadSecrets();
+    } catch (error: any) {
+      const errorMsg = error?.message || error?.response?.data?.detail || "Could not send the secret.";
+      CustomAlert.alert("Upload Failed", errorMsg);
+      console.error(error);
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
+  };
 
-      setIsUploading(true);
-      try {
-        await uploadSecret(asset.uri);
-        triggerNotification("Confidential Message", "Sent a confidential message").catch(() => {});
-        CustomAlert.alert("Success", "Secret sent successfully!");
-      } catch (error: any) {
-        const errorMsg = error?.response?.data?.detail || "Could not send the secret.";
-        CustomAlert.alert("Upload Failed", errorMsg);
-        console.error(error);
-      } finally {
-        setIsUploading(false);
+  const handleTakePhoto = async () => {
+    setPickerOpen(false);
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        CustomAlert.alert("Permission Required", "Camera permission is required to take photos.");
+        return;
       }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+        allowsEditing: false,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        await processAndUploadSecret(asset.uri, asset.mimeType || 'image/jpeg', 'secret.jpg', false);
+      }
+    } catch (e: any) {
+      console.error(e);
+      CustomAlert.alert("Camera Error", e?.message || "Could not open camera.");
+    }
+  };
+
+  const handleRecordVideo = async () => {
+    setPickerOpen(false);
+    try {
+      const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
+      const micStatus = await Camera.requestMicrophonePermissionsAsync();
+      if (cameraStatus.status !== 'granted' || micStatus.status !== 'granted') {
+        CustomAlert.alert("Permission Required", "Camera and microphone permissions are required to record video.");
+        return;
+      }
+
+      // Max 4 minutes (240s) for video recording
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['videos'],
+        videoMaxDuration: 240,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        const durationSec = getVideoDurationInSeconds(asset);
+        if (durationSec !== null && durationSec > 240.5) {
+          CustomAlert.alert(
+            "Video Too Long",
+            "Recorded video exceeds the 4-minute maximum limit (240 seconds)."
+          );
+          return;
+        }
+        await processAndUploadSecret(asset.uri, asset.mimeType || 'video/mp4', 'secret.mp4', true);
+      }
+    } catch (e: any) {
+      console.error(e);
+      CustomAlert.alert("Video Error", e?.message || "Could not record video.");
+    }
+  };
+
+  const handleChooseLibrary = async () => {
+    setPickerOpen(false);
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        CustomAlert.alert("Permission Required", "Photo library permission is required to select photos and videos.");
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        const isVideo = asset.type === 'video' || asset.mimeType?.startsWith('video') || asset.uri.toLowerCase().endsWith('.mp4') || asset.uri.toLowerCase().endsWith('.mov');
+
+        // Enforce 4-minute maximum duration (240 seconds)
+        if (isVideo) {
+          const durationSec = getVideoDurationInSeconds(asset);
+          if (durationSec !== null && durationSec > 240.5) {
+            const mins = Math.floor(durationSec / 60);
+            const secs = Math.round(durationSec % 60);
+            CustomAlert.alert(
+              "Video Too Long",
+              `Confidential videos cannot exceed 4 minutes (240 seconds).\nSelected video is ${mins}m ${secs}s long. Please trim or select a video under 4 minutes.`
+            );
+            return;
+          }
+        }
+
+        const mime = asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg');
+        const filename = isVideo ? 'secret.mp4' : 'secret.jpg';
+        await processAndUploadSecret(asset.uri, mime, filename, isVideo);
+      }
+    } catch (e: any) {
+      console.error(e);
+      CustomAlert.alert("Upload Error", e?.message || "Could not open library.");
     }
   };
 
   const handleViewSecretIn = async (secret: any) => {
     setViewingSecret(secret);
     setIsPaused(false);
-    if (!authToken) return;
 
+    try {
+      // 1. Fetch direct remote stream URL & metadata (handles AWS S3 presigned URL or direct local stream)
+      const viewInfo = await getSecretViewInfo(secret.id);
+      if (viewInfo?.url) {
+        setMediaDataUri(viewInfo.url);
+        return;
+      }
+    } catch (apiErr) {
+      console.log("Could not get direct secret view url, trying fallback", apiErr);
+    }
+
+    // Fallback: fetch blob
+    if (!authToken) return;
     try {
       const res = await fetch(getSecretViewUrl(secret.id), {
         headers: { Authorization: `Bearer ${authToken}` }
@@ -268,6 +422,9 @@ const Confidential: React.FC = () => {
   const handleViewSecretOut = () => {
     if (!viewingSecretRef.current) return;
     setSecrets(prev => prev.filter(s => s.id !== viewingSecretRef.current.id));
+    if (mediaDataUri && mediaDataUri.startsWith('file://')) {
+      FileSystem.deleteAsync(mediaDataUri, { idempotent: true }).catch(() => {});
+    }
     setViewingSecret(null);
     setMediaDataUri(null);
     progress.stopAnimation();
@@ -350,7 +507,7 @@ const Confidential: React.FC = () => {
 
       <View style={styles.messageMeta}>
         <AppText variant="mono" style={{ color: '#8C7F75', fontSize: 12 }}>
-          📷 OPENS ONCE • {secret.delete_after}
+          {secret.file_type?.startsWith('video') || secret.filename?.endsWith('.mp4') || secret.filename?.endsWith('.mov') ? '🎥 VIDEO' : '📷 PHOTO'} • OPENS ONCE • {secret.delete_after}
         </AppText>
         
         {(!secret.is_viewed || secret.rewatch_status === 'approved') ? (
@@ -389,9 +546,20 @@ const Confidential: React.FC = () => {
           </View>
           <AppText variant="mono" style={viewerStyles.loadingText}>DECRYPTING...</AppText>
           <AppText variant="serifItalic" style={viewerStyles.loadingSubtext}>
-            Preparing your secret photo
+            Preparing your secret media
           </AppText>
         </View>
+      );
+    }
+
+    const isVideo = isCurrentMediaVideo(viewingSecret, mediaDataUri);
+
+    if (isVideo) {
+      return (
+        <ProfessionalVideoPlayer
+          uri={mediaDataUri}
+          isPausedExternal={isPaused}
+        />
       );
     }
 
@@ -424,7 +592,7 @@ const Confidential: React.FC = () => {
       </AppText>
 
       <AppText variant="serifItalic" size={13} color={Colors.cream} style={styles.subtitle}>
-        Photos that open once, then disappear. No screenshots, no saves.
+        Photos and videos that open once, then disappear. No screenshots, no saves.
       </AppText>
 
       {secrets.length === 0 ? (
@@ -538,28 +706,32 @@ const Confidential: React.FC = () => {
       <Modal visible={!!viewingSecret} transparent={true} animationType="fade">
         <GestureHandlerRootView style={{ flex: 1 }}>
           <View style={viewerStyles.container}>
-            {/* Top gradient overlay */}
-            <LinearGradient
-              colors={['rgba(0,0,0,0.8)', 'transparent']}
-              style={viewerStyles.topGradient}
-            />
+            {/* Top gradient overlay (Photos only; video has its own overlay) */}
+            {!isCurrentMediaVideo(viewingSecret, mediaDataUri) && (
+              <LinearGradient
+                colors={['rgba(0,0,0,0.8)', 'transparent']}
+                style={viewerStyles.topGradient}
+              />
+            )}
 
-            {/* Close button */}
-            <Pressable onPress={handleViewSecretOut} style={viewerStyles.closeButton}>
+            {/* Close button (always clickable on top) */}
+            <Pressable onPress={handleViewSecretOut} style={[viewerStyles.closeButton, { zIndex: 99 }]} hitSlop={15}>
               <View style={viewerStyles.closeButtonInner}>
                 <AppText style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>✕</AppText>
               </View>
             </Pressable>
 
-            {/* Progress bar */}
-            <View style={viewerStyles.progressTrack}>
-              <Animated.View style={[viewerStyles.progressBar, { 
-                width: progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] })
-              }]} />
-            </View>
+            {/* Progress bar (Photos only) */}
+            {mediaDataUri && !isCurrentMediaVideo(viewingSecret, mediaDataUri) && (
+              <View style={viewerStyles.progressTrack}>
+                <Animated.View style={[viewerStyles.progressBar, { 
+                  width: progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] })
+                }]} />
+              </View>
+            )}
 
-            {/* Timer label */}
-            {mediaDataUri && (
+            {/* Timer label (Photos only) */}
+            {mediaDataUri && !isCurrentMediaVideo(viewingSecret, mediaDataUri) && (
               <View style={viewerStyles.timerLabel}>
                 <AppText variant="mono" style={{ color: 'rgba(255,255,255,0.5)', fontSize: 9 }}>
                   {isPaused ? 'PAUSED' : 'AUTO-DESTRUCT'}
@@ -567,25 +739,27 @@ const Confidential: React.FC = () => {
               </View>
             )}
 
-            {/* Media content */}
+            {/* Media content: touch responder only activates for photos */}
             <View 
               style={{ flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center' }}
-              onStartShouldSetResponder={() => true}
-              onResponderGrant={handlePause}
-              onResponderRelease={handleResume}
-              onResponderTerminate={handleResume}
+              onStartShouldSetResponder={() => !isCurrentMediaVideo(viewingSecret, mediaDataUri)}
+              onResponderGrant={!isCurrentMediaVideo(viewingSecret, mediaDataUri) ? handlePause : undefined}
+              onResponderRelease={!isCurrentMediaVideo(viewingSecret, mediaDataUri) ? handleResume : undefined}
+              onResponderTerminate={!isCurrentMediaVideo(viewingSecret, mediaDataUri) ? handleResume : undefined}
             >
               {renderMediaViewer()}
             </View>
 
-            {/* Bottom gradient overlay */}
-            <LinearGradient
-              colors={['transparent', 'rgba(0,0,0,0.6)']}
-              style={viewerStyles.bottomGradient}
-            />
+            {/* Bottom gradient overlay (Photos only) */}
+            {!isCurrentMediaVideo(viewingSecret, mediaDataUri) && (
+              <LinearGradient
+                colors={['transparent', 'rgba(0,0,0,0.6)']}
+                style={viewerStyles.bottomGradient}
+              />
+            )}
 
-            {/* Bottom hint */}
-            {mediaDataUri && (
+            {/* Bottom hint (Photos only) */}
+            {mediaDataUri && !isCurrentMediaVideo(viewingSecret, mediaDataUri) && (
               <View style={viewerStyles.bottomHint}>
                 <AppText variant="mono" style={{ color: 'rgba(255,255,255,0.35)', fontSize: 9 }}>
                   HOLD TO PAUSE • PINCH TO ZOOM • DOUBLE TAP TO 2.5×
@@ -595,6 +769,100 @@ const Confidential: React.FC = () => {
           </View>
         </GestureHandlerRootView>
       </Modal>
+
+      {/* ─── Video/Photo Upload Progress Modal ─── */}
+      <Modal
+        visible={isUploading}
+        transparent={true}
+        animationType="fade"
+        statusBarTranslucent={true}
+      >
+        <View style={styles.uploadOverlay}>
+          <View style={styles.uploadCard}>
+            <View style={styles.uploadHeader}>
+              <View style={styles.uploadIconBadge}>
+                <Ionicons
+                  name={uploadMediaType === 'video' ? 'videocam' : 'image'}
+                  size={24}
+                  color={Colors.accent}
+                />
+              </View>
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <AppText variant="heading" size={17} color="#fff">
+                  {uploadMediaType === 'video' ? 'Uploading Video' : 'Uploading Photo'}
+                </AppText>
+                <AppText variant="serifItalic" size={12.5} color="#8C7F75" style={{ marginTop: 2 }}>
+                  {uploadProgress >= 100
+                    ? 'Finalizing encryption...'
+                    : `Encrypted transfer · ${uploadProgress}%`}
+                </AppText>
+              </View>
+              <AppText variant="mono" size={17} color={Colors.accent} style={{ fontWeight: '700' }}>
+                {uploadProgress}%
+              </AppText>
+            </View>
+
+            {/* Progress Track */}
+            <View style={styles.progressBarTrack}>
+              <View style={[styles.progressBarFill, { width: `${Math.max(4, uploadProgress)}%` }]} />
+            </View>
+
+            <View style={styles.uploadFooter}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="lock-closed" size={12} color="#8C7F75" />
+                <AppText variant="mono" size={10} color="#8C7F75" style={{ letterSpacing: 0.5 }}>
+                  MAX 4 MIN · END-TO-END ENCRYPTED
+                </AppText>
+              </View>
+              <ActivityIndicator size="small" color={Colors.accent} />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Media Picker Bottom Sheet */}
+      <BottomSheet
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        title="Send something private"
+        kicker="CONFIDENTIAL"
+        dark={true}
+      >
+        <View style={styles.sheetOptionContainer}>
+          <Pressable style={styles.sheetOption} onPress={handleTakePhoto}>
+            <View style={styles.sheetIconWrap}>
+              <AppText size={20}>📷</AppText>
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="heading" size={17} color="#fff">Take Photo</AppText>
+              <AppText variant="serifItalic" size={13} color="#8C7F75">Capture a moment from your camera</AppText>
+            </View>
+            <AppText color="#8C7F75" size={16}>→</AppText>
+          </Pressable>
+
+          <Pressable style={styles.sheetOption} onPress={handleRecordVideo}>
+            <View style={styles.sheetIconWrap}>
+              <AppText size={20}>🎥</AppText>
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="heading" size={17} color="#fff">Record Video</AppText>
+              <AppText variant="serifItalic" size={13} color="#8C7F75">Up to 4 minutes with sound</AppText>
+            </View>
+            <AppText color="#8C7F75" size={16}>→</AppText>
+          </Pressable>
+
+          <Pressable style={styles.sheetOption} onPress={handleChooseLibrary}>
+            <View style={styles.sheetIconWrap}>
+              <AppText size={20}>📁</AppText>
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="heading" size={17} color="#fff">Choose from Library</AppText>
+              <AppText variant="serifItalic" size={13} color="#8C7F75">Upload photos or videos up to 4 minutes</AppText>
+            </View>
+            <AppText color="#8C7F75" size={16}>→</AppText>
+          </Pressable>
+        </View>
+      </BottomSheet>
     </View>
   );
 };
@@ -705,6 +973,81 @@ const styles = StyleSheet.create({
     fontSize: 10,
     letterSpacing: 1,
     fontWeight: '600',
+  },
+  sheetOptionContainer: {
+    paddingVertical: 10,
+    gap: 12,
+    paddingBottom: 24,
+  },
+  sheetOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2D1D1A',
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(224, 108, 108, 0.2)',
+  },
+  sheetIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#1D1815',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  uploadOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.78)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    zIndex: 9999,
+  },
+  uploadCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#161311',
+    borderRadius: 20,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.45,
+    shadowRadius: 18,
+    elevation: 10,
+  },
+  uploadHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  uploadIconBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(204, 123, 92, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  progressBarTrack: {
+    height: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 14,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: Colors.accent,
+    borderRadius: 3,
+  },
+  uploadFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
 });
 

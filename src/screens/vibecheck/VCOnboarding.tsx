@@ -13,6 +13,8 @@ import { RootStackParamList } from '../../types';
 import { setupVibeProfile, connectWithKey, generateInvite } from '../../services/vibeCheckApi';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getMe } from '../../services/authApi';
 // QRCode imported conditionally below
 import * as ImagePicker from 'expo-image-picker';
 import { Platform } from 'react-native';
@@ -32,6 +34,31 @@ type Nav = StackNavigationProp<RootStackParamList>;
 
 export const VCOnboarding: React.FC = () => {
   const nav = useNavigation<Nav>();
+
+  React.useEffect(() => {
+    const checkAlignment = async () => {
+      try {
+        const token = await AsyncStorage.getItem('access_token');
+        if (token) {
+          const user = await getMe();
+          if (user?.is_aligned || user?.partner) {
+            Alert.alert(
+              'Access Restricted',
+              'You are currently in an aligned relationship. Access to Vibe Check is locked unless your aligned connection is broken.'
+            );
+            nav.reset({
+              index: 0,
+              routes: [{ name: 'AlignedApp' }],
+            });
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    };
+    checkAlignment();
+  }, [nav]);
+
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const qrSize = Math.min(Math.round(windowWidth * 0.48), Math.round(windowHeight * 0.20), 180);
   const [step, setStep] = useState(0);

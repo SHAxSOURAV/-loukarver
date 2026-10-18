@@ -16,6 +16,7 @@ LogBox.ignoreLogs([
 import RootNavigator from './src/navigation/RootNavigator';
 import { Colors } from './src/constants/colors';
 import { CustomAlert } from './src/components/ui/CustomAlert';
+import { InAppNotificationBanner } from './src/components/ui/InAppNotificationBanner';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 
 import Constants, { ExecutionEnvironment } from 'expo-constants';
@@ -66,6 +67,7 @@ export default function App() {
             <StatusBar style="dark" backgroundColor={Colors.bone} />
             <RootNavigator />
             <CustomAlert />
+            <InAppNotificationBanner />
           </SafeAreaProvider>
         </KeyboardProvider>
       </GestureHandlerRootView>

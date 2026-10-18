@@ -1,5 +1,5 @@
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { View, ScrollView, StyleSheet, Pressable, RefreshControl, DeviceEventEmitter } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -18,6 +18,8 @@ import { useTimeOfDay } from "../../hooks/useTimeOfDay";
 import { formatTime } from "../../utils/dateUtils";
 import UsSection from "./UsSection";
 import Rhythms from "./Rhythms";
+import Moment from "./Moment";
+import Confidential from "./Confidential";
 import { AppTextInput } from "@/components/ui/AppTextInput";
 import AlignedNav from "@/components/ui/AlignedNav";
 import OurPlaylist from "./OurPlaylist";
@@ -81,41 +83,25 @@ export const HomeScreen: React.FC = () => {
   
   const [refreshing, setRefreshing] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [currentDate, setCurrentDate] = useState<Date>(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentDate(new Date());
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, []);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     setRefreshTrigger(prev => prev + 1);
+    DeviceEventEmitter.emit('TRACK_LOCATION_NOW');
     setTimeout(() => setRefreshing(false), 1000);
   }, []);
 
 
 
-  useFocusEffect(
-    useCallback(() => {
-      const fetchUser = async () => {
-        try {
-          const data = await getMe();
-          if (data && data.name) {
-            const firstName = data.name.trim().split(" ")[0];
-            setUserName(firstName);
-          }
-          
-          const pProfile = await getPartnerProfile();
-          if (pProfile && pProfile.success && pProfile.data && pProfile.data.name) {
-            const partnerFirstName = pProfile.data.name.trim().split(" ")[0];
-            setPartnerName(partnerFirstName);
-          } else if (data && data.partner && data.partner.name) {
-            // Fallback to cached partner name if profile fetch fails
-            const partnerFirstName = data.partner.name.trim().split(" ")[0];
-            setPartnerName(partnerFirstName);
-          }
-        } catch (err) {
-          console.log("Error fetching user for greeting:", err);
-        }
-      };
-      fetchUser();
-    }, [refreshTrigger])
-  );
+  const lastFocusFetchRef = useRef<number>(0);
 
   const [activeUser] = useState<"lou" | "amanda">("lou");
   const [sheet, setSheet] = useState<string | null>(null);
@@ -167,60 +153,82 @@ export const HomeScreen: React.FC = () => {
 
   useFocusEffect(
     useCallback(() => {
+      const now = Date.now();
+      // Throttle focus effect to at most once every 2.5 seconds unless pull-to-refresh
+      if (now - lastFocusFetchRef.current < 2500 && refreshTrigger === 0) {
+        return;
+      }
+      lastFocusFetchRef.current = now;
+
       const loadData = async () => {
-      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const today = new Date().toLocaleDateString('en-US', {
-        month: '2-digit', day: '2-digit', year: 'numeric'
-      }).replace(/\//g, '.');
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const today = new Date().toLocaleDateString('en-US', {
+          month: '2-digit', day: '2-digit', year: 'numeric'
+        }).replace(/\//g, '.');
 
-      // Fix #10: Run all API calls in parallel instead of sequentially
-      const [streakData, qData, checkinData, summary, moods, opts, rituals] = await Promise.all([
-        getStreak(tz).catch((e: any) => { console.log("Error fetching streak:", e); return null; }),
-        getQuestionsEndpoint().catch((e: any) => { console.log("Error fetching questions:", e); return null; }),
-        getCheckin(today).catch((e: any) => { console.log("Error fetching existing checkin:", e); return null; }),
-        getAlignedSyncSummary(tz).catch((e: any) => { console.log("Error fetching sync summary:", e); return null; }),
-        getCurrentMood().catch((e: any) => { console.log("Error fetching current mood:", e); return null; }),
-        getMoodList().catch((e: any) => { console.log("Error fetching mood list:", e); return null; }),
-        getPartnerRituals(1, 100, tz).catch((e: any) => { console.log("Error fetching partner rituals:", e); return null; }),
-      ]);
+        // Run all API calls in parallel, deduplicating with in-memory cache
+        const [meData, pProfile, streakData, qData, checkinData, summary, moods, opts, rituals] = await Promise.all([
+          getMe().catch(() => null),
+          getPartnerProfile().catch(() => null),
+          getStreak(tz).catch((e: any) => { console.log("Error fetching streak:", e); return null; }),
+          getQuestionsEndpoint().catch((e: any) => { console.log("Error fetching questions:", e); return null; }),
+          getCheckin(today).catch((e: any) => { console.log("Error fetching existing checkin:", e); return null; }),
+          getAlignedSyncSummary(tz).catch((e: any) => { console.log("Error fetching sync summary:", e); return null; }),
+          getCurrentMood().catch((e: any) => { console.log("Error fetching current mood:", e); return null; }),
+          getMoodList().catch((e: any) => { console.log("Error fetching mood list:", e); return null; }),
+          getPartnerRituals(1, 100, tz).catch((e: any) => { console.log("Error fetching partner rituals:", e); return null; }),
+        ]);
 
-      if (streakData) setStreak(streakData.current_streak);
-
-      if (qData?.data) setQuestions(qData.data);
-
-      if (checkinData?.data) {
-        if (checkinData.data.my_check_in) {
-          setCheckinQ1(checkinData.data.my_check_in.answer_1);
-          setCheckinQ2(checkinData.data.my_check_in.answer_2);
-          setCheckinQ3(checkinData.data.my_check_in.answer_3);
-          setHasCheckedInToday(true);
+        if (meData && meData.name) {
+          const firstName = meData.name.trim().split(" ")[0];
+          setUserName(firstName);
         }
-        if (checkinData.data.partner_check_in) {
-          setPartnerCheckin(checkinData.data.partner_check_in);
+
+        if (pProfile && pProfile.success && pProfile.data && pProfile.data.name) {
+          const partnerFirstName = pProfile.data.name.trim().split(" ")[0];
+          setPartnerName(partnerFirstName);
+        } else if (meData && meData.partner && meData.partner.name) {
+          const partnerFirstName = meData.partner.name.trim().split(" ")[0];
+          setPartnerName(partnerFirstName);
         }
-      }
 
-      if (summary) {
-        setSyncData(summary);
-        setWeScore(summary.overall_score);
-      }
+        if (streakData) setStreak(streakData.current_streak);
 
-      if (moods?.data) {
-        const mine = moods.data.find((m: any) => !m.is_partner);
-        const theirs = moods.data.find((m: any) => m.is_partner);
-        if (mine) setMyMood(mine);
-        if (theirs) setPartnerMood(theirs);
-      }
+        if (qData?.data) setQuestions(qData.data);
 
-      if (opts?.data) setMoodOptions(opts.data);
-      setIsLoadingMood(false);
+        if (checkinData?.data) {
+          if (checkinData.data.my_check_in) {
+            setCheckinQ1(checkinData.data.my_check_in.answer_1);
+            setCheckinQ2(checkinData.data.my_check_in.answer_2);
+            setCheckinQ3(checkinData.data.my_check_in.answer_3);
+            setHasCheckedInToday(true);
+          }
+          if (checkinData.data.partner_check_in) {
+            setPartnerCheckin(checkinData.data.partner_check_in);
+          }
+        }
 
-      if (rituals?.data) {
-        setPartnerRitualHistory(rituals.data);
-        setHasPartnerRituals(rituals.data.filter((r: any) => !r.is_hidden).length > 0);
-      }
-      
+        if (summary) {
+          setSyncData(summary);
+          setWeScore(summary.overall_score);
+        }
+
+        if (moods?.data) {
+          const mine = moods.data.find((m: any) => !m.is_partner);
+          const theirs = moods.data.find((m: any) => m.is_partner);
+          if (mine) setMyMood(mine);
+          if (theirs) setPartnerMood(theirs);
+        }
+
+        if (opts?.data) setMoodOptions(opts.data);
+        setIsLoadingMood(false);
+
+        if (rituals?.data) {
+          setPartnerRitualHistory(rituals.data);
+          setHasPartnerRituals(rituals.data.filter((r: any) => !r.is_hidden).length > 0);
+        }
       };
+
       loadData();
     }, [refreshTrigger])
   );
@@ -368,7 +376,7 @@ export const HomeScreen: React.FC = () => {
               color={Colors.muted}
               style={{ fontSize: 10, marginBottom: 12 }}
             >
-              {new Date()
+              {currentDate
                 .toLocaleDateString("en-US", {
                   weekday: "long",
                   month: "long",
@@ -439,7 +447,7 @@ export const HomeScreen: React.FC = () => {
                   </AppText>
                 </Pressable>
                 <AppText variant="smallCaps" size={9.5} color={Colors.muted} style={{ letterSpacing: 0.5 }}>
-                  {' '}· {formatTime(new Date())}
+                  {' '}· {formatTime(currentDate)}
                 </AppText>
               </View>
               <AppText
@@ -549,6 +557,12 @@ export const HomeScreen: React.FC = () => {
             </View>
           </View>
             <Rhythms />
+            <View style={{ marginTop: 24 }}>
+              <Moment />
+            </View>
+            <View style={{ marginTop: 24 }}>
+              <Confidential />
+            </View>
         </View>
 
         {/* Extra space for tab bar */}

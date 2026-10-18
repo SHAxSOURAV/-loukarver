@@ -202,7 +202,7 @@ export type RootStackParamList = {
 
 export type AlignedTabParamList = {
   Home: undefined;
-  Connect: undefined;
+  Connect?: undefined;
   Dates: undefined;
   Thread: undefined;
   Future: undefined;

@@ -1,11 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { AppState, AppStateStatus } from 'react-native';
+import { AppState, DeviceEventEmitter } from 'react-native';
 import * as Location from 'expo-location';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { logPresence } from '../services/notificationApi';
-
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-const DENIAL_KEY = 'location_denied_at';
 
 export const usePresenceTracker = () => {
   const appState = useRef(AppState.currentState);
@@ -13,45 +9,45 @@ export const usePresenceTracker = () => {
   const isTracking = useRef<boolean>(false);
 
   const trackPresence = async (force = false) => {
-    // Throttle: don't track if already tracking or if tracked less than 3 minutes ago (unless forced)
     const now = Date.now();
     if (isTracking.current) return;
-    if (!force && now - lastTrackedAt.current < 3 * 60 * 1000) {
+    // Throttle to once every 2 minutes unless explicitly forced
+    if (!force && now - lastTrackedAt.current < 2 * 60 * 1000) {
       return;
     }
 
     isTracking.current = true;
     try {
-      let latitude = null;
-      let longitude = null;
-      let city = null;
+      let latitude: number | null = null;
+      let longitude: number | null = null;
+      let city: string | null = null;
 
       try {
-        // First check current permission status quietly without showing a dialog
+        // Check current permission status
         let perm = await Location.getForegroundPermissionsAsync();
         let status = perm.status;
 
+        // If not granted, request permission
         if (status !== 'granted') {
-          const deniedAtStr = await AsyncStorage.getItem(DENIAL_KEY);
-          const deniedAt = deniedAtStr ? parseInt(deniedAtStr, 10) : 0;
-          const isCoolingDown = deniedAt > 0 && (now - deniedAt < SEVEN_DAYS_MS);
-
-          // Only prompt user if they haven't denied in the last 7 days and can ask again
-          if (!isCoolingDown && perm.canAskAgain) {
+          if (perm.canAskAgain) {
             const req = await Location.requestForegroundPermissionsAsync();
             status = req.status;
-            if (status !== 'granted') {
-              await AsyncStorage.setItem(DENIAL_KEY, now.toString());
-            }
           }
         }
 
         if (status === 'granted') {
-          // Timeout after 8 seconds to prevent hangs on Xiaomi/Android location service delays
-          const location = await Promise.race([
-            Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
-            new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000))
-          ]);
+          // 1. Get fast last known position first (instant fallback)
+          let location = await Location.getLastKnownPositionAsync().catch(() => null);
+
+          // 2. Fetch fresh high-accuracy position with safe 6s timeout
+          const freshLocation = await Promise.race([
+            Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000)),
+          ]).catch(() => null);
+
+          if (freshLocation && freshLocation.coords) {
+            location = freshLocation;
+          }
 
           if (location && location.coords) {
             latitude = location.coords.latitude;
@@ -60,15 +56,24 @@ export const usePresenceTracker = () => {
             try {
               const reverseGeocode = await Location.reverseGeocodeAsync({ latitude, longitude });
               if (reverseGeocode && reverseGeocode.length > 0) {
-                city = reverseGeocode[0].city || reverseGeocode[0].region || null;
+                const place = reverseGeocode[0];
+                city =
+                  place.city ||
+                  place.subregion ||
+                  place.district ||
+                  place.region ||
+                  place.name ||
+                  null;
               }
             } catch (e) {
-              // Ignore reverse geocode failures
+              console.log('Reverse geocode error:', e);
             }
           }
+        } else {
+          DeviceEventEmitter.emit('LOCATION_PERMISSION_STATUS', { granted: false, canAskAgain: perm.canAskAgain });
         }
       } catch (locErr) {
-        console.log("Location permission/position check skipped:", locErr);
+        console.log('Location tracking error:', locErr);
       }
 
       let timezone = 'UTC';
@@ -82,40 +87,47 @@ export const usePresenceTracker = () => {
         timezone,
         latitude,
         longitude,
-        city
+        city,
       });
+
       lastTrackedAt.current = Date.now();
-      console.log("Presence tracked successfully.");
+      // Notify components to refresh with the newly logged city and timezone
+      DeviceEventEmitter.emit('PRESENCE_TRACKED', { city, timezone });
     } catch (e) {
-      console.log("Failed to track presence:", e);
+      console.log('Failed to track presence:', e);
     } finally {
       isTracking.current = false;
     }
   };
 
   useEffect(() => {
-    // Track on initial mount
-    trackPresence();
+    // Track immediately on mount
+    trackPresence(true);
 
-    // Track every 5 minutes while the app is active
+    // Track every 4 minutes while the app is active
     const interval = setInterval(() => {
       if (AppState.currentState === 'active') {
         trackPresence();
       }
-    }, 5 * 60 * 1000);
+    }, 4 * 60 * 1000);
 
     // Track on app resume
-    const subscription = AppState.addEventListener('change', nextAppState => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
-        trackPresence();
+        trackPresence(true);
       }
       appState.current = nextAppState;
+    });
+
+    // Support explicit re-tracking triggered from UI (e.g. pull-to-refresh)
+    const subEvent = DeviceEventEmitter.addListener('TRACK_LOCATION_NOW', () => {
+      trackPresence(true);
     });
 
     return () => {
       clearInterval(interval);
       subscription.remove();
+      subEvent.remove();
     };
   }, []);
 };
-
