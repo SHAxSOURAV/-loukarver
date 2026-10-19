@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DeviceEventEmitter } from 'react-native';
 
 const baseURL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://13-61-230-140.sslip.io';
+console.log('[API] Current baseURL is:', baseURL);
 
 const api = axios.create({
   baseURL,
