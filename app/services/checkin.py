@@ -96,7 +96,7 @@ class CheckInService:
                             type=NotificationType.PARTNER_CHECKIN,
                             scheduled_for=datetime.now(timezone.utc),
                             timezone=payload.timezone,
-                            metadata={"screen": "Home", "date": payload.date, "action": "checkin_created"}
+                            metadata={"screen": "Home", "date": payload.date, "action": "checkin_created", "sheet": "side-by-side"}
                         )
                     )
                 except Exception as e:

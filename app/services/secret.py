@@ -116,7 +116,7 @@ class SecretService:
                 title=f"New Secret from {u_name}! 🤫",
                 message="They sent you something for your eyes only.",
                 type=NotificationType.CONFIDENTIAL_MESSAGE,
-                metadata={"screen": "Connect", "secret_id": new_doc["id"], "url": "samesy://connect"}
+                metadata={"screen": "SecretHistory", "secret_id": new_doc["id"]}
             )
         ))
         
@@ -328,7 +328,7 @@ class SecretService:
                 title=f"{u_name} asked to rewatch! 🔄",
                 message="They want to see your secret one more time.",
                 type=NotificationType.CONFIDENTIAL_MESSAGE,
-                metadata={"screen": "Connect", "secret_id": str(oid), "url": "samesy://connect"}
+                metadata={"screen": "SecretHistory", "secret_id": str(oid)}
             )
         ))
         

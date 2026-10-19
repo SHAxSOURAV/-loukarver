@@ -10,6 +10,7 @@ from pydantic import BaseModel
 class TriggerCreate(BaseModel):
     type: NotificationType
     message: str
+    metadata: Optional[dict] = None
 from app.services.notification import notification_service
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
@@ -49,7 +50,8 @@ async def trigger_notification(payload: TriggerCreate, current_user: dict = Depe
             message=payload.message,
             type=payload.type,
             scheduled_for=datetime.now(timezone.utc),
-            timezone="UTC"
+            timezone="UTC",
+            metadata=payload.metadata
         )
     )
     return GenericResponse(success=True, message="Notification triggered.")

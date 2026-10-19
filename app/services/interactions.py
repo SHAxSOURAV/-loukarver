@@ -73,7 +73,12 @@ class InteractionService:
                     message=f"{info['user_name']} sent you a silent ping.",
                     type=NotificationType.THINKING_OF_YOU,
                     scheduled_for=datetime.now(timezone.utc),
-                    timezone="UTC"
+                    timezone="UTC",
+                    metadata={
+                        "screen": "Home",
+                        "section": "moment",
+                        "action": "silent_ping"
+                    }
                 )
             )
         except Exception as e:

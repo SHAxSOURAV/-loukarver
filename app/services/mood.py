@@ -198,7 +198,13 @@ class MoodService:
                             message=f"{user_name} is feeling {mood_name}.",
                             type=NotificationType.MOOD_CHANGE,
                             scheduled_for=datetime.now(timezone.utc),
-                            timezone="UTC"
+                            timezone="UTC",
+                            metadata={
+                                "screen": "Home",
+                                "section": "mood",
+                                "mood_name": mood_name,
+                                "mood_symbol": mood_option.get("symbol", "")
+                            }
                         )
                     )
                     # Real-time WebSocket broadcast to partner
