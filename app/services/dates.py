@@ -188,11 +188,13 @@ class DateService:
             ]
             
         sort_criteria = [("utc_timestamp", 1)]
-        if sort == "Upcoming First":
+        if sort in ["Upcoming First", "Upcoming"]:
             if "status" not in query:
                 query["status"] = {"$nin": ["Completed", "Rejected", "Cancelled"]}
-        elif sort == "Latest First":
-            sort_criteria = [("utc_timestamp", -1)]
+        elif sort in ["Latest First", "Latest"]:
+            sort_criteria = [("utc_timestamp", -1), ("_id", -1)]
+        elif sort in ["Oldest First", "Oldest"]:
+            sort_criteria = [("utc_timestamp", 1), ("_id", 1)]
         elif sort == "Recently Created":
             sort_criteria = [("_id", -1)]
             
