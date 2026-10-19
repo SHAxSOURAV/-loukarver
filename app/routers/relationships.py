@@ -3,7 +3,9 @@ import uuid
 import shutil
 import cv2
 import numpy as np
-from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File
+from typing import Optional
+from bson import ObjectId
+from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Response, Query
 from fastapi.responses import FileResponse
 from app.schemas.relationships import (
     RelationshipCreate,
@@ -12,7 +14,9 @@ from app.schemas.relationships import (
     AlignResponse,
     BreakAlignmentRequest,
     RespondAlignmentRequest,
-    CancelAlignmentRequest
+    CancelAlignmentRequest,
+    PartnerPictureData,
+    PartnerPictureResponse,
 )
 from app.services.relationships import relationship_service
 from app.services.s3_utils import s3_service
@@ -81,6 +85,101 @@ async def get_partner_profile(current_user: dict = Depends(get_current_user)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred retrieving partner data: {str(e)}"
+        )
+
+@router.get("/partner/picture", response_model=PartnerPictureResponse, status_code=status.HTTP_200_OK)
+async def get_partner_profile_picture(
+    response: Response,
+    context: str = Query("aligned", pattern="^(aligned|vibe)$"),
+    partner_id: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Super-fast endpoint returning the partner's current profile picture.
+    - context='aligned': fetches aligned partner from `users` collection.
+    - context='vibe': fetches specific vibe partner from `vibe_check_profiles` by `partner_id`.
+    Applies CloudFront CDN conversion and HTTP caching headers.
+    """
+    try:
+        if context == "aligned":
+            aligned_partner_id = current_user.get("partner", {}).get("user_id") if isinstance(current_user.get("partner"), dict) else None
+            if not aligned_partner_id:
+                u = await relationship_service.collection.find_one(
+                    {"_id": ObjectId(current_user["id"])},
+                    {"partner.user_id": 1, "is_aligned": 1}
+                )
+                if u and u.get("is_aligned"):
+                    aligned_partner_id = u.get("partner", {}).get("user_id")
+
+            if not aligned_partner_id:
+                return PartnerPictureResponse(success=False, message="No aligned partner found.", data=None)
+
+            partner = await relationship_service.collection.find_one(
+                {"_id": ObjectId(aligned_partner_id)},
+                {"profile_photo_url": 1, "name": 1, "profile_photos": 1}
+            )
+            if not partner:
+                return PartnerPictureResponse(success=False, message="Partner profile not found.", data=None)
+
+            raw_pic = partner.get("profile_photo_url")
+            if not raw_pic and partner.get("profile_photos"):
+                photos = partner.get("profile_photos")
+                if isinstance(photos, list) and len(photos) > 0:
+                    raw_pic = photos[0].get("url")
+
+            cdn_url = s3_service.to_cdn_url(raw_pic) if raw_pic else None
+            response.headers["Cache-Control"] = "private, max-age=60, stale-while-revalidate=300"
+
+            return PartnerPictureResponse(
+                success=True,
+                data=PartnerPictureData(
+                    partner_id=str(partner["_id"]),
+                    name=partner.get("name", "Partner"),
+                    picture_url=cdn_url,
+                    context="aligned"
+                )
+            )
+
+        elif context == "vibe":
+            from app.services.vibe_check import vibe_check_service
+            target_pid = partner_id
+            if not target_pid:
+                vibe_conn = await vibe_check_service.connections.find_one(
+                    {"user_id": current_user["id"]},
+                    {"partner_id": 1}
+                )
+                if vibe_conn:
+                    target_pid = vibe_conn["partner_id"]
+
+            if not target_pid:
+                return PartnerPictureResponse(success=False, message="No vibe partner specified or found.", data=None)
+
+            vibe_profile = await vibe_check_service.profiles.find_one(
+                {"user_id": target_pid},
+                {"profile_picture": 1, "name": 1}
+            )
+            if not vibe_profile:
+                return PartnerPictureResponse(success=False, message="Vibe partner profile not found.", data=None)
+
+            raw_pic = vibe_profile.get("profile_picture")
+            cdn_url = s3_service.to_cdn_url(raw_pic) if raw_pic else None
+            response.headers["Cache-Control"] = "private, max-age=60, stale-while-revalidate=300"
+
+            return PartnerPictureResponse(
+                success=True,
+                data=PartnerPictureData(
+                    partner_id=target_pid,
+                    name=vibe_profile.get("name", "Vibe Partner"),
+                    picture_url=cdn_url,
+                    context="vibe"
+                )
+            )
+        else:
+            return PartnerPictureResponse(success=False, message="Invalid context specified.", data=None)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving partner picture: {str(e)}"
         )
 
 @router.post("/create", response_model=RelationshipResponse, status_code=status.HTTP_201_CREATED, response_model_exclude_none=True)

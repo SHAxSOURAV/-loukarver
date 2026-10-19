@@ -132,3 +132,15 @@ class RespondAlignmentRequest(BaseModel):
 
 class CancelAlignmentRequest(BaseModel):
     request_id: str
+
+class PartnerPictureData(BaseModel):
+    partner_id: str
+    name: str
+    picture_url: Optional[str] = None
+    context: str
+
+class PartnerPictureResponse(BaseModel):
+    success: bool
+    message: Optional[str] = "Partner picture retrieved successfully"
+    data: Optional[PartnerPictureData] = None
+
