@@ -580,7 +580,7 @@ export const HomeScreen: React.FC = () => {
               )}
             </View>
           </View>
-            <Rhythms />
+            <Rhythms refreshTrigger={refreshTrigger} />
             <View style={{ marginTop: 24 }}>
               <Moment />
             </View>

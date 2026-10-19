@@ -102,6 +102,7 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
     fetchPresenceData();
 
     const sub1 = DeviceEventEmitter.addListener('OPEN_PRESENCE_HISTORY', () => {
+      fetchPresenceData();
       setIsSheetOpen(true);
     });
     const sub2 = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', debouncedFetchPresenceData);
@@ -616,15 +617,16 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
             </Pressable>
           </View>
         </View>
-        <ScrollView style={{ maxHeight: 400 }}>
-          {presenceNotifications.length === 0 ? (
-            <AppText color={Colors.muted} style={{ textAlign: 'center', marginTop: 20 }}>
-              No recent activity recorded.
-            </AppText>
-          ) : (
-            presenceNotifications
-              .filter(n => showHidden ? n.is_hidden : !n.is_hidden)
-              .map((n, idx) => {
+        {(() => {
+          const visibleNotifications = presenceNotifications.filter(n => showHidden ? n.is_hidden : !n.is_hidden);
+          return (
+            <ScrollView style={{ maxHeight: 400 }}>
+              {visibleNotifications.length === 0 ? (
+                <AppText color={Colors.muted} style={{ textAlign: 'center', marginTop: 20 }}>
+                  {showHidden ? "No archived activity." : "No recent activity recorded."}
+                </AppText>
+              ) : (
+                visibleNotifications.map((n, idx) => {
                 const isUnread = n.status !== "Seen";
                 const borderC = isUnread ? Colors.accent : Colors.rule;
                 const bgC = isUnread ? '#ffffff' : 'transparent';
@@ -727,8 +729,10 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
                   </View>
                 );
               })
-          )}
-        </ScrollView>
+            )}
+          </ScrollView>
+          );
+        })()}
       </BottomSheet>
 
     </>

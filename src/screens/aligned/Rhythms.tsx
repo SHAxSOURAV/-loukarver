@@ -31,7 +31,11 @@ const ENERGY_LEVELS = ["Drained", "Flat", "Steady", "On", "Lit"];
 const SLEEP_LEVELS = ["Depleted", "Under-Slept", "Adequate", "Rested"];
 const STRESS_LEVELS = ["Light", "Moderate", "Heavy", "Max"];
 
-const Rhythms: React.FC = () => {
+interface RhythmsProps {
+  refreshTrigger?: number;
+}
+
+const Rhythms: React.FC<RhythmsProps> = ({ refreshTrigger = 0 }) => {
   const [activeSheet, setActiveSheet] = useState<
     "herRhythm" | "yourState" | null
   >(null);
@@ -176,7 +180,7 @@ const Rhythms: React.FC = () => {
       subCycle.remove();
       subState.remove();
     };
-  }, []);
+  }, [refreshTrigger]);
 
   const handleUpdateCycle = async (day: DateData) => {
     setShowCalendar(false);
