@@ -211,6 +211,55 @@ class LifeCycleService:
             "current_note": current_note
         }
 
+    async def _notify_partner_cycle_update(self, user_id: str):
+        try:
+            owner_id, partner_id, owner_user = await self._get_owner_and_partner(user_id)
+            if not partner_id:
+                return
+            
+            is_shared = owner_user.get("cycle_data_shared", True) if owner_user else True
+            if not is_shared:
+                return
+                
+            owner_name = owner_user.get("name", "Your partner") if owner_user else "Your partner"
+            now_utc = datetime.now(timezone.utc)
+            
+            # 1. Schedule notification (saves in DB, sends OneSignal push, sends WebSocket NEW_NOTIFICATION)
+            from app.services.notification import notification_service
+            from app.schemas.notification import NotificationCreate, NotificationType
+            await notification_service.schedule_notification(
+                sender_id=user_id,
+                payload=NotificationCreate(
+                    recipient_id=partner_id,
+                    type=NotificationType.CYCLE_UPDATE,
+                    title="Cycle Updated",
+                    message=f"{owner_name} updated her cycle dates.",
+                    scheduled_for=now_utc,
+                    timezone="UTC"
+                )
+            )
+            
+            # 2. Real-time WebSocket broadcast to partner
+            from app.core.websocket import ws_manager
+            await ws_manager.broadcast_to_user(partner_id, {
+                "type": "STATE_UPDATE",
+                "message": f"{owner_name} updated her cycle dates.",
+                "data": {
+                    "type": "CYCLE_UPDATE",
+                    "user_id": user_id
+                }
+            })
+            await ws_manager.broadcast_to_user(partner_id, {
+                "type": "CYCLE_UPDATED",
+                "message": f"{owner_name} updated her cycle dates.",
+                "data": {
+                    "type": "CYCLE_UPDATE",
+                    "user_id": user_id
+                }
+            })
+        except Exception as e:
+            print(f"Failed to notify partner of cycle update: {e}")
+
     async def add_period(self, user_id: str, payload: PeriodCreate) -> Dict[str, Any]:
         new_period = {
             "user_id": user_id,
@@ -224,6 +273,8 @@ class LifeCycleService:
         # Ensure _id is a string and added as 'id'
         new_period["id"] = str(result.inserted_id)
         new_period["_id"] = str(result.inserted_id)
+        
+        await self._notify_partner_cycle_update(user_id)
         return new_period
 
     async def update_period(self, user_id: str, period_id: str, payload: PeriodUpdate) -> Dict[str, Any]:
@@ -238,10 +289,13 @@ class LifeCycleService:
         if updated:
             updated["id"] = str(updated["_id"])
             updated["_id"] = str(updated["_id"])
+        
+        await self._notify_partner_cycle_update(user_id)
         return updated
 
     async def delete_period(self, user_id: str, period_id: str):
         await self.periods.delete_one({"_id": ObjectId(period_id), "user_id": user_id})
+        await self._notify_partner_cycle_update(user_id)
 
     # --- Phase Notes ---
 
