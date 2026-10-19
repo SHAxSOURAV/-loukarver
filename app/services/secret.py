@@ -171,19 +171,26 @@ class SecretService:
         
         return new_doc
 
-    async def _resolve_user_partner_names(self, user_id: str, user_doc: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
+    async def _resolve_user_partner_names(self, user_id: str, user_doc: Optional[Dict[str, Any]] = None) -> Tuple[str, str, Optional[str]]:
         if user_doc:
             user = user_doc
         else:
             user = await self.users.find_one({"_id": ObjectId(user_id)}, {"partner": 1, "name": 1, "is_aligned": 1})
         u_name = user.get("name", "User") if user else "User"
         p_name = "Partner"
+        p_photo = None
         partner_id = user.get("partner", {}).get("user_id") if user and user.get("is_aligned") and user.get("partner") else None
         if partner_id:
-            pt = await self.users.find_one({"_id": ObjectId(partner_id)}, {"name": 1})
+            pt = await self.users.find_one({"_id": ObjectId(partner_id)}, {"name": 1, "profile_photo_url": 1, "profile_photos": 1})
             if pt:
                 p_name = pt.get("name", "Partner")
-        return u_name, p_name
+                raw_pic = pt.get("profile_photo_url")
+                if not raw_pic and pt.get("profile_photos"):
+                    photos = pt.get("profile_photos")
+                    if isinstance(photos, list) and len(photos) > 0:
+                        raw_pic = photos[0].get("url")
+                p_photo = s3_service.to_cdn_url(raw_pic) if raw_pic else None
+        return u_name, p_name, p_photo
 
     async def get_secrets_for_me(self, user_id: str, page: int = 1, size: int = 10, user_timezone: str = "UTC", user_doc: Optional[Dict[str, Any]] = None) -> Tuple[List[Dict[str, Any]], int]:
         skip = (page - 1) * size
@@ -194,7 +201,7 @@ class SecretService:
         total_task = self.secrets_collection.count_documents(query)
         names_task = self._resolve_user_partner_names(user_id, user_doc)
         
-        docs, total, (u_name, p_name) = await asyncio.gather(docs_task, total_task, names_task)
+        docs, total, (u_name, p_name, p_photo) = await asyncio.gather(docs_task, total_task, names_task)
 
         try:
             tz = zoneinfo.ZoneInfo(user_timezone)
@@ -207,6 +214,7 @@ class SecretService:
             del d["_id"]
             d["user_name"] = u_name
             d["partner_name"] = p_name
+            d["partner_profile_photo"] = p_photo
             if "prevent_screenshot" not in d:
                 d["prevent_screenshot"] = True
             
@@ -236,7 +244,7 @@ class SecretService:
         total_task = self.secrets_collection.count_documents(query)
         names_task = self._resolve_user_partner_names(user_id, user_doc)
         
-        docs, total, (u_name, p_name) = await asyncio.gather(docs_task, total_task, names_task)
+        docs, total, (u_name, p_name, p_photo) = await asyncio.gather(docs_task, total_task, names_task)
 
         try:
             tz = zoneinfo.ZoneInfo(user_timezone)
@@ -249,6 +257,7 @@ class SecretService:
             del d["_id"]
             d["user_name"] = u_name
             d["partner_name"] = p_name
+            d["partner_profile_photo"] = p_photo
             if "prevent_screenshot" not in d:
                 d["prevent_screenshot"] = True
 

@@ -2,12 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from fastapi.responses import FileResponse, RedirectResponse
 from typing import List
 
+from app.core.config import settings
 from app.routers.auth import get_current_user
 from app.schemas.secret import (
     SecretRead, SecretPaginatedResponse, GenericResponse,
     SecretPatchScreenshot
 )
 from app.services.secret import secret_service
+from app.services.s3_utils import s3_service
 
 router = APIRouter(prefix="/secret", tags=["Secret"])
 
@@ -97,11 +99,11 @@ async def get_secret_view_url_endpoint(
             await secret_service.mark_secret_viewed(secret_id)
 
         file_url = doc.get("stored_filename", "")
-        if file_url and ("amazonaws.com" in file_url or (getattr(settings, "AWS_CLOUDFRONT_DOMAIN", None) and settings.AWS_CLOUDFRONT_DOMAIN in file_url)):
-            from app.services.s3_utils import s3_service
-            file_url = s3_service.generate_presigned_view_url(file_url, expires_in=7200)
-        elif not file_url.startswith("http") and not file_url.startswith("/"):
-            file_url = f"/{file_url}"
+        if file_url:
+            if s3_service.s3_client or getattr(settings, "AWS_CLOUDFRONT_DOMAIN", None) or s3_service.is_s3_or_cdn_url(file_url):
+                file_url = s3_service.generate_presigned_view_url(file_url, expires_in=7200)
+            elif not file_url.startswith("http") and not file_url.startswith("/"):
+                file_url = f"/{file_url}"
 
         filename = doc.get("filename", "")
         file_type = doc.get("file_type", "")
@@ -144,11 +146,11 @@ async def view_secret(
             await secret_service.mark_secret_viewed(secret_id)
             
         file_url = doc.get("stored_filename", "")
-        if file_url and ("amazonaws.com" in file_url or (getattr(settings, "AWS_CLOUDFRONT_DOMAIN", None) and settings.AWS_CLOUDFRONT_DOMAIN in file_url)):
-            from app.services.s3_utils import s3_service
-            file_url = s3_service.generate_presigned_view_url(file_url, expires_in=7200)
-        elif not file_url.startswith("http") and not file_url.startswith("/"):
-            file_url = f"/{file_url}"
+        if file_url:
+            if s3_service.s3_client or getattr(settings, "AWS_CLOUDFRONT_DOMAIN", None) or s3_service.is_s3_or_cdn_url(file_url):
+                file_url = s3_service.generate_presigned_view_url(file_url, expires_in=7200)
+            elif not file_url.startswith("http") and not file_url.startswith("/"):
+                file_url = f"/{file_url}"
 
         filename = doc.get("filename", "")
         file_type = doc.get("file_type", "")
