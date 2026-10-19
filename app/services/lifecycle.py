@@ -141,22 +141,23 @@ class LifeCycleService:
                 "current_note": current_note
             }
             
-        # 1. Calculate Average Cycle Length
-        cycle_lengths = []
+        # 1. Parse and sort history chronologically descending (since start_date is mm.dd.yyyy string)
         parsed_history = []
-        for i in range(len(history)):
-            curr_date = parse_date(history[i]["start_date"])
+        for h in history:
+            curr_date = parse_date(h["start_date"])
             parsed_history.append({
-                "id": str(history[i]["_id"]),
-                "user_id": history[i]["user_id"],
-                "start_date": history[i]["start_date"],
+                "id": str(h["_id"]),
+                "user_id": h["user_id"],
+                "start_date": h["start_date"],
                 "dt": curr_date
             })
-            if i + 1 < len(history):
-                prev_date = parse_date(history[i+1]["start_date"])
-                diff = (curr_date - prev_date).days
-                if 20 < diff < 45: # Filter out outliers
-                    cycle_lengths.append(diff)
+        parsed_history.sort(key=lambda x: x["dt"], reverse=True)
+
+        cycle_lengths = []
+        for i in range(len(parsed_history) - 1):
+            diff = (parsed_history[i]["dt"] - parsed_history[i+1]["dt"]).days
+            if 20 < diff < 45: # Filter out outliers
+                cycle_lengths.append(diff)
                     
         avg_cycle = int(sum(cycle_lengths) / len(cycle_lengths)) if cycle_lengths else 28
         
@@ -235,7 +236,8 @@ class LifeCycleService:
                     title="Cycle Updated",
                     message=f"{owner_name} updated her cycle dates.",
                     scheduled_for=now_utc,
-                    timezone="UTC"
+                    timezone="UTC",
+                    metadata={"screen": "Home", "section": "cycle"}
                 )
             )
             
