@@ -25,20 +25,13 @@ async def upload_secret(
     `prevent_screenshot`: If true, hints the client to block screenshots/recording.
     `delete_after`: Duration (e.g., '10 Minutes', '1 Hours', '10 Seconds').
     """
-    # Enforce file size limit
-    contents = await file.read()
-    if len(contents) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024*1024)}MB."
-        )
-    await file.seek(0)  # Reset file pointer after reading
-    
     try:
         await secret_service.save_secret(current_user["id"], file, prevent_screenshot, delete_after)
         return GenericResponse(success=True, message="Secret sent to partner!")
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
@@ -104,7 +97,7 @@ async def get_secret_view_url_endpoint(
             await secret_service.mark_secret_viewed(secret_id)
 
         file_url = doc.get("stored_filename", "")
-        if file_url and "amazonaws.com" in file_url:
+        if file_url and ("amazonaws.com" in file_url or (getattr(settings, "AWS_CLOUDFRONT_DOMAIN", None) and settings.AWS_CLOUDFRONT_DOMAIN in file_url)):
             from app.services.s3_utils import s3_service
             file_url = s3_service.generate_presigned_view_url(file_url, expires_in=7200)
         elif not file_url.startswith("http") and not file_url.startswith("/"):
@@ -151,7 +144,7 @@ async def view_secret(
             await secret_service.mark_secret_viewed(secret_id)
             
         file_url = doc.get("stored_filename", "")
-        if file_url and "amazonaws.com" in file_url:
+        if file_url and ("amazonaws.com" in file_url or (getattr(settings, "AWS_CLOUDFRONT_DOMAIN", None) and settings.AWS_CLOUDFRONT_DOMAIN in file_url)):
             from app.services.s3_utils import s3_service
             file_url = s3_service.generate_presigned_view_url(file_url, expires_in=7200)
         elif not file_url.startswith("http") and not file_url.startswith("/"):

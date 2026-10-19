@@ -1155,7 +1155,7 @@ class RelationshipService:
             
         file_url = target.get("url")
         if file_url:
-            if "amazonaws.com" in file_url:
+            if s3_service.is_s3_or_cdn_url(file_url):
                 await s3_service.delete_file(file_url)
             elif os.path.exists(file_url.lstrip("/")):
                 os.remove(file_url.lstrip("/"))

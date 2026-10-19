@@ -188,7 +188,7 @@ class VibeCheckService:
             old_path = existing.get("profile_picture")
             from app.services.s3_utils import s3_service
             import os
-            if "amazonaws.com" in old_path:
+            if s3_service.is_s3_or_cdn_url(old_path):
                 await s3_service.delete_file(old_path)
             elif os.path.exists(old_path):
                 os.remove(old_path)
@@ -798,7 +798,7 @@ class VibeCheckService:
         if old_path:
             from app.services.s3_utils import s3_service
             import os
-            if "amazonaws.com" in old_path:
+            if s3_service.is_s3_or_cdn_url(old_path):
                 await s3_service.delete_file(old_path)
             elif os.path.exists(old_path):
                 os.remove(old_path)

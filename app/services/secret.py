@@ -80,28 +80,77 @@ class SecretService:
         now = datetime.now(timezone.utc)
         expires_at = now + duration
 
-        # Save file to S3
-        file_url = await s3_service.upload_file(file, folder="secrets")
+        import tempfile
+        from app.utils.video_processor import is_video_file, optimize_video_file
 
-        # Create database entry
-        new_doc = {
-            "sender_id": sender_id,
-            "recipient_id": partner_id,
-            "filename": file.filename,
-            "stored_filename": file_url,
-            "file_type": file.content_type,
-            "size": file.size,
-            "prevent_screenshot": prevent_screenshot,
-            "delete_after": delete_after,
-            "created_at": now,
-            "expires_at": expires_at,
-            "is_viewed": False,
-            "status": "delivered",
-            "rewatch_status": "none"
-        }
-        
-        result = await self.secrets_collection.insert_one(new_doc)
-        new_doc["id"] = str(result.inserted_id)
+        temp_input_path = None
+        temp_output_path = None
+        max_allowed_size = 100 * 1024 * 1024  # 100MB
+
+        try:
+            # 1. Stream incoming upload directly to temporary file on disk in 1MB chunks (prevents memory spikes)
+            suffix = os.path.splitext(file.filename or "")[1] or ".bin"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_in:
+                temp_input_path = tmp_in.name
+                total_size = 0
+                while chunk := await file.read(1024 * 1024):
+                    total_size += len(chunk)
+                    if total_size > max_allowed_size:
+                        raise ValueError("File too large. Maximum size is 100MB.")
+                    tmp_in.write(chunk)
+
+            final_path = temp_input_path
+            final_filename = file.filename or "secret"
+            final_content_type = file.content_type or "application/octet-stream"
+
+            # 2. Optimize video for instant mobile streaming (+faststart, 720p, H.264, AAC)
+            if is_video_file(final_filename, final_content_type):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_out:
+                    temp_output_path = tmp_out.name
+
+                success = await optimize_video_file(temp_input_path, temp_output_path)
+                if success:
+                    final_path = temp_output_path
+                    final_content_type = "video/mp4"
+                    base_name = os.path.splitext(final_filename)[0]
+                    final_filename = f"{base_name}.mp4"
+
+            actual_size = os.path.getsize(final_path)
+
+            # 3. Stream upload directly from disk to AWS S3 / Local storage
+            file_url = await s3_service.upload_file_from_path(
+                final_path,
+                filename=final_filename,
+                content_type=final_content_type,
+                folder="secrets"
+            )
+
+            # 4. Create database entry
+            new_doc = {
+                "sender_id": sender_id,
+                "recipient_id": partner_id,
+                "filename": final_filename,
+                "stored_filename": file_url,
+                "file_type": final_content_type,
+                "size": actual_size,
+                "prevent_screenshot": prevent_screenshot,
+                "delete_after": delete_after,
+                "created_at": now,
+                "expires_at": expires_at,
+                "is_viewed": False,
+                "status": "delivered",
+                "rewatch_status": "none"
+            }
+            
+            result = await self.secrets_collection.insert_one(new_doc)
+            new_doc["id"] = str(result.inserted_id)
+        finally:
+            if temp_input_path and os.path.exists(temp_input_path):
+                try: os.remove(temp_input_path)
+                except Exception: pass
+            if temp_output_path and os.path.exists(temp_output_path):
+                try: os.remove(temp_output_path)
+                except Exception: pass
         
         # Fire websocket to recipient
         await ws_manager.broadcast_to_user(partner_id, {"type": "SECRET_DELIVERED"})
@@ -402,10 +451,10 @@ class SecretService:
             
         # Delete file
         try:
-            if doc["stored_filename"] and "amazonaws.com" in doc["stored_filename"]:
+            if doc.get("stored_filename") and ("amazonaws.com" in doc["stored_filename"] or (getattr(settings, "AWS_CLOUDFRONT_DOMAIN", None) and settings.AWS_CLOUDFRONT_DOMAIN in doc["stored_filename"])):
                 await s3_service.delete_file(doc["stored_filename"])
             else:
-                file_path = self.get_full_path(doc["stored_filename"])
+                file_path = self.get_full_path(doc.get("stored_filename", ""))
                 if os.path.exists(file_path):
                     os.remove(file_path)
         except Exception:

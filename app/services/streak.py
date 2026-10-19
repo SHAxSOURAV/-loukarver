@@ -514,7 +514,7 @@ class StreakSystem:
         elif file and file.filename:
             # Delete old file if exists
             if file_path:
-                if "amazonaws.com" in file_path:
+                if s3_service.is_s3_or_cdn_url(file_path):
                     await s3_service.delete_file(file_path)
                 else:
                     local_path = file_path.lstrip("/")

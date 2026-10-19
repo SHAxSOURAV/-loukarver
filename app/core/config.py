@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_REGION: str = "eu-north-1"
     AWS_S3_BUCKET_NAME: str = ""
+    AWS_CLOUDFRONT_DOMAIN: str = ""
     
     # MapTiler Configuration
     MAPTILER_API_KEY: str = ""

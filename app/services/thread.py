@@ -465,7 +465,7 @@ class ThreadService:
 
             file_url = doc.get("content", {}).get("file_url")
             if file_url:
-                if "amazonaws.com" in file_url:
+                if s3_service.is_s3_or_cdn_url(file_url):
                     await s3_service.delete_file(file_url)
                 else:
                     local_path = file_url.lstrip("/")
@@ -508,7 +508,7 @@ class ThreadService:
             if file:
                 old_file = doc["content"].get("file_url")
                 if old_file:
-                    if "amazonaws.com" in old_file:
+                    if s3_service.is_s3_or_cdn_url(old_file):
                         await s3_service.delete_file(old_file)
                     else:
                         lp = old_file.lstrip("/")
@@ -519,7 +519,7 @@ class ThreadService:
             if file:
                 old_file = doc["content"].get("file_url")
                 if old_file:
-                    if "amazonaws.com" in old_file:
+                    if s3_service.is_s3_or_cdn_url(old_file):
                         await s3_service.delete_file(old_file)
                     else:
                         lp = old_file.lstrip("/")

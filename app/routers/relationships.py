@@ -390,9 +390,9 @@ async def get_photo(user_id: str, current_user: dict = Depends(get_current_user)
         if not file_path:
             raise HTTPException(status_code=404, detail="Photo not found.")
             
-        if "amazonaws.com" in file_path:
+        if s3_service.is_s3_or_cdn_url(file_path):
             from fastapi.responses import RedirectResponse
-            return RedirectResponse(url=file_path)
+            return RedirectResponse(url=s3_service.to_cdn_url(file_path))
             
         clean_path = file_path.lstrip("/")
         if not os.path.exists(clean_path):
@@ -411,7 +411,7 @@ async def delete_photo(current_user: dict = Depends(get_current_user)):
     try:
         file_path = current_user.get("profile_photo_url")
         if file_path:
-            if "amazonaws.com" in file_path:
+            if s3_service.is_s3_or_cdn_url(file_path):
                 await s3_service.delete_file(file_path)
             elif os.path.exists(file_path):
                 os.remove(file_path)

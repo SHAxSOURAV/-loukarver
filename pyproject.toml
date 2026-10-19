@@ -17,4 +17,5 @@ dependencies = [
     "opencv-python-headless>=4.13.0.92",
     "apscheduler>=3.11.3",
     "boto3>=1.43.51",
+    "imageio-ffmpeg>=0.6.0",
 ]
