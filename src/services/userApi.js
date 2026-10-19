@@ -93,6 +93,20 @@ export const getPartnerProfile = async (forceRefresh = false) => {
   return partnerCachePromise;
 };
 
+/**
+ * @param {'aligned' | 'vibe'} [context]
+ * @param {string | null} [partnerId]
+ * @returns {Promise<any>}
+ */
+export const getFastPartnerPicture = async (context = 'aligned', partnerId = null) => {
+  const params = new URLSearchParams();
+  if (context) params.append('context', context);
+  if (partnerId) params.append('partner_id', partnerId);
+  const response = await api.get(`/users/partner/picture?${params.toString()}`);
+  return response.data;
+};
+
+
 export const uploadProfilePhoto = async (imageUri) => {
   const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
   const token = await AsyncStorage.getItem('access_token');

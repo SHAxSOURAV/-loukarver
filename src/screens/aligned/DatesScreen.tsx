@@ -16,6 +16,7 @@ import { countdownParts } from "../../utils/dateUtils";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Ionicons } from "@expo/vector-icons";
 import AlignedNav from "@/components/ui/AlignedNav";
+import { showPartnerPicture } from "@/components/ui/PartnerPictureViewer";
 
 import { createDate, listDates, respondToDate, completeDate, addReview, updateReview, updateDate, pingDate, requestCancelDate, cancelDate, requestDeletePhoto, approveDeletePhoto, rejectDeletePhoto, deleteDate, suggestDateVenue } from "../../services/datesApi";
 import { getMe } from "../../services/authApi";
@@ -831,13 +832,25 @@ const TimerDisplay = ({ targetDate }: { targetDate: string }) => {
                     <View key={i} style={{ marginBottom: 24, backgroundColor: Colors.transparent, padding: 16, borderRadius: 16, borderWidth: 1, borderColor: Colors.rule }}>
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                         <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
-                          {avatarUrl ? (
-                            <Image source={{ uri: avatarUrl }} style={{ width: 36, height: 36, borderRadius: 18 }} />
-                          ) : (
-                            <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.rule, alignItems: 'center', justifyContent: 'center' }}>
-                              <AppText variant="smallCaps" size={14} color={Colors.ink}>{initials}</AppText>
-                            </View>
-                          )}
+                          <Pressable
+                            onPress={() => {
+                              if (!isMine) {
+                                showPartnerPicture({
+                                  context: 'aligned',
+                                  fallbackUrl: avatarUrl,
+                                  name: displayName,
+                                });
+                              }
+                            }}
+                          >
+                            {avatarUrl ? (
+                              <Image source={{ uri: avatarUrl }} style={{ width: 36, height: 36, borderRadius: 18 }} />
+                            ) : (
+                              <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.rule, alignItems: 'center', justifyContent: 'center' }}>
+                                <AppText variant="smallCaps" size={14} color={Colors.ink}>{initials}</AppText>
+                              </View>
+                            )}
+                          </Pressable>
                           <View>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                               <AppText variant="smallCaps" color={Colors.ink} size={14} style={{ marginBottom: 4 }}>

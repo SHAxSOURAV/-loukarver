@@ -10,6 +10,7 @@ import { deleteMessage } from '../../services/threadApi';
 import { BottomSheet } from '../ui/BottomSheet';
 import { AppButton } from '../ui/AppButton';
 import ImageViewing from './ImageViewerWrapper';
+import { showPartnerPicture } from '../ui/PartnerPictureViewer';
 import { File, Paths } from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 
@@ -200,7 +201,18 @@ export const ThreadEntryCard: React.FC<ThreadEntryProps> = ({ entry: t, onDelete
       {/* UNIFIED TOP HEADER */}
       <View style={styles.cardHeader}>
         <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-          <View style={styles.avatarCircle}>
+          <Pressable
+            style={styles.avatarCircle}
+            onPress={() => {
+              if (!isMine) {
+                showPartnerPicture({
+                  context: 'aligned',
+                  fallbackUrl: senderPhotoUri,
+                  name: senderName,
+                });
+              }
+            }}
+          >
             {senderPhotoUri ? (
               <Image source={{ uri: senderPhotoUri }} style={styles.avatarImg} />
             ) : (
@@ -208,7 +220,7 @@ export const ThreadEntryCard: React.FC<ThreadEntryProps> = ({ entry: t, onDelete
                 {senderName.charAt(0).toUpperCase()}
               </AppText>
             )}
-          </View>
+          </Pressable>
 
           <View style={{ marginLeft: 10 }}>
             <AppText variant="heading" size={14} color={Colors.ink}>

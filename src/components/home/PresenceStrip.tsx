@@ -11,6 +11,7 @@ import api from '../../services/api';
 import { BottomSheet } from '../ui/BottomSheet';
 import { AppTextInput } from '../ui/AppTextInput';
 import { AppButton } from '../ui/AppButton';
+import { showPartnerPicture } from '../ui/PartnerPictureViewer';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { Swipeable } from 'react-native-gesture-handler';
@@ -513,7 +514,16 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
     <>
       <View style={styles.container}>
         <View style={styles.left}>
-          <View style={styles.avatarWrap}>
+          <Pressable
+            style={styles.avatarWrap}
+            onPress={() => {
+              showPartnerPicture({
+                context: 'aligned',
+                fallbackUrl: partner.profile_photo_url,
+                name: partnerName,
+              });
+            }}
+          >
             <View style={styles.avatar}>
               {partner.profile_photo_url ? (
                 <Image source={{ 
@@ -528,7 +538,7 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
               )}
             </View>
             <View style={[styles.dot, { backgroundColor: dotColor }]} />
-          </View>
+          </Pressable>
           <View style={{ flex: 1 }}>
             <AppText variant="smallCaps" color={Colors.muted} style={{ marginBottom: 2 }}>
               {locationStr ? `${locationStr} · ` : ''}{partnerTimeStr}

@@ -860,19 +860,12 @@ export const MapScreen: React.FC = () => {
           <View style={styles.floatingHeaderCard}>
             {/* Row 1: Header, Place Count, Compact Search Box & Refresh */}
             <View style={styles.headerTopRow}>
-              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-                <AppText variant="display" size={24} style={{ lineHeight: 26 }}>
-                  Map
-                  <AppText size={24} color={Colors.accent}>
-                    .
-                  </AppText>
+              <AppText variant="display" size={24} style={{ lineHeight: 26 }}>
+                Map
+                <AppText size={24} color={Colors.accent}>
+                  .
                 </AppText>
-                <View style={styles.placeBadge}>
-                  <AppText variant="mono" size={9} color={Colors.ink2}>
-                    {filtered.length} {filtered.length === 1 ? 'place' : 'places'}
-                  </AppText>
-                </View>
-              </View>
+              </AppText>
 
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginLeft: 8, gap: 6 }}>
                 {/* Compact Search Box replacing the top Add button */}

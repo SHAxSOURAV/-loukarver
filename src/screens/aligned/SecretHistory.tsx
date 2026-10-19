@@ -7,6 +7,8 @@ import { Colors } from '../../constants/colors';
 import { AppText } from '../../components/ui/AppText';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from 'expo-screen-capture';
 import { getReceivedSecrets, getSecretViewInfo, requestRewatchSecret } from '../../services/secretApi';
+import { getPartnerProfile } from '../../services/userApi';
+import { showPartnerPicture, normalizePartnerImageUrl } from '../../components/ui/PartnerPictureViewer';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import ReAnimated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -30,6 +32,8 @@ export const SecretHistory: React.FC = () => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const navigation = useNavigation<any>();
   const [secrets, setSecrets] = useState<any[]>([]);
+  const [partnerPhoto, setPartnerPhoto] = useState<string | null>(null);
+  const [partnerName, setPartnerName] = useState<string>('Partner');
   const [viewingSecret, setViewingSecret] = useState<any | null>(null);
   const [mediaDataUri, setMediaDataUri] = useState<string | null>(null);
   const [isPaused, setIsPaused] = useState(false);
@@ -153,8 +157,15 @@ export const SecretHistory: React.FC = () => {
 
   const loadSecrets = async () => {
     try {
-      const resRec = await getReceivedSecrets();
+      const [resRec, partnerRes] = await Promise.all([
+        getReceivedSecrets(),
+        getPartnerProfile().catch(() => null)
+      ]);
       if (resRec.success) setSecrets(resRec.data);
+      if (partnerRes?.data) {
+        if (partnerRes.data.profile_photo_url) setPartnerPhoto(partnerRes.data.profile_photo_url);
+        if (partnerRes.data.name) setPartnerName(partnerRes.data.name);
+      }
     } catch (e) { console.log("Failed to load secrets", e); }
   };
 
@@ -225,17 +236,37 @@ export const SecretHistory: React.FC = () => {
 
   const renderSecret = (secret: any) => {
     const isVideo = secret.file_type?.startsWith('video') || secret.filename?.endsWith('.mp4') || secret.filename?.endsWith('.mov');
+    const rawPhoto = secret.partner_profile_photo || partnerPhoto;
+    const partnerPhotoUri = normalizePartnerImageUrl(rawPhoto);
+    const pName = secret.partner_name || partnerName || "Partner";
+
     return (
       <View key={secret.id} style={styles.messageCard}>
         <View style={styles.messageHeader}>
-          <View style={styles.avatar}>
-            <AppText style={{ color: '#fff', fontSize: 14 }}>
-              {secret.partner_name ? secret.partner_name[0].toUpperCase() : "P"}
-            </AppText>
-          </View>
+          <Pressable
+            style={styles.avatar}
+            onPress={() => {
+              showPartnerPicture({
+                context: 'aligned',
+                fallbackUrl: rawPhoto,
+                name: pName,
+              });
+            }}
+          >
+            {partnerPhotoUri ? (
+              <Image
+                source={{ uri: partnerPhotoUri }}
+                style={{ width: '100%', height: '100%', borderRadius: 18 }}
+              />
+            ) : (
+              <AppText style={{ color: '#fff', fontSize: 14 }}>
+                {pName ? pName[0].toUpperCase() : "P"}
+              </AppText>
+            )}
+          </Pressable>
           <View>
             <AppText variant="mono" style={styles.fromText}>
-              FROM {secret.partner_name ? secret.partner_name.toUpperCase() : "PARTNER"}
+              FROM {pName ? pName.toUpperCase() : "PARTNER"}
             </AppText>
             <AppText variant="heading" size={17} style={{ color: '#fff' }}>
               Something just for you
@@ -407,7 +438,7 @@ const styles = StyleSheet.create({
   messageHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
   avatar: {
     width: 36, height: 36, borderRadius: 18, backgroundColor: '#E06C6C',
-    alignItems: 'center', justifyContent: 'center',
+    alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
   },
   fromText: { fontSize: 11, color: '#AD442E', letterSpacing: 1 },
   messageMeta: {

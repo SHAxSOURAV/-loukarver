@@ -12,6 +12,8 @@ import { preventScreenCaptureAsync, allowScreenCaptureAsync } from 'expo-screen-
 import { uploadSecret, getReceivedSecrets, getSentSecrets, getSecretViewUrl, getSecretViewInfo, requestRewatchSecret, approveRewatchSecret, declineRewatchSecret, revokeSecret } from '../../services/secretApi';
 import { triggerNotification } from '../../services/notificationApi';
 import { getMe } from '../../services/authApi';
+import { getPartnerProfile } from '../../services/userApi';
+import { showPartnerPicture, normalizePartnerImageUrl } from '../../components/ui/PartnerPictureViewer';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import ReAnimated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
@@ -52,6 +54,8 @@ const Confidential: React.FC = () => {
   const [approvingSecretId, setApprovingSecretId] = useState<string | null>(null);
   const [decliningSecretId, setDecliningSecretId] = useState<string | null>(null);
   const [requestingSecretId, setRequestingSecretId] = useState<string | null>(null);
+  const [partnerPhoto, setPartnerPhoto] = useState<string | null>(null);
+  const [partnerName, setPartnerName] = useState<string>('Partner');
 
   const progress = useRef(new Animated.Value(1)).current;
   const animRef = useRef<Animated.CompositeAnimation | null>(null);
@@ -207,12 +211,17 @@ const Confidential: React.FC = () => {
 
   const loadSecrets = async () => {
     try {
-      const [resRec, resSent] = await Promise.all([
+      const [resRec, resSent, partnerRes] = await Promise.all([
         getReceivedSecrets(),
-        getSentSecrets()
+        getSentSecrets(),
+        getPartnerProfile().catch(() => null)
       ]);
       if (resRec.success) setSecrets(resRec.data);
       if (resSent.success) setSentSecrets(resSent.data);
+      if (partnerRes?.data) {
+        if (partnerRes.data.profile_photo_url) setPartnerPhoto(partnerRes.data.profile_photo_url);
+        if (partnerRes.data.name) setPartnerName(partnerRes.data.name);
+      }
     } catch (e) {
       console.log("Failed to load secrets", e);
     }
@@ -524,23 +533,44 @@ const Confidential: React.FC = () => {
     );
   };
 
-  const renderSecret = (secret: any) => (
-    <View key={secret.id} style={styles.messageCard}>
-      <View style={styles.messageHeader}>
-        <View style={styles.avatar}>
-          <AppText style={{ color: '#fff', fontSize: 14 }}>
-            {secret.partner_name ? secret.partner_name[0].toUpperCase() : "P"}
-          </AppText>
+  const renderSecret = (secret: any) => {
+    const rawPhoto = secret.partner_profile_photo || partnerPhoto;
+    const partnerPhotoUri = normalizePartnerImageUrl(rawPhoto);
+    const pName = secret.partner_name || partnerName || "Partner";
+
+    return (
+      <View key={secret.id} style={styles.messageCard}>
+        <View style={styles.messageHeader}>
+          <Pressable
+            style={styles.avatar}
+            onPress={() => {
+              showPartnerPicture({
+                context: 'aligned',
+                fallbackUrl: rawPhoto,
+                name: pName,
+              });
+            }}
+          >
+            {partnerPhotoUri ? (
+              <Image
+                source={{ uri: partnerPhotoUri }}
+                style={{ width: '100%', height: '100%', borderRadius: 18 }}
+              />
+            ) : (
+              <AppText style={{ color: '#fff', fontSize: 14 }}>
+                {pName ? pName[0].toUpperCase() : "P"}
+              </AppText>
+            )}
+          </Pressable>
+          <View>
+            <AppText variant="mono" style={styles.fromText}>
+              FROM {pName ? pName.toUpperCase() : "PARTNER"}
+            </AppText>
+            <AppText variant="heading" size={17} style={{ color: '#fff' }}>
+              Something just for you
+            </AppText>
+          </View>
         </View>
-        <View>
-          <AppText variant="mono" style={styles.fromText}>
-            FROM {secret.partner_name ? secret.partner_name.toUpperCase() : "PARTNER"}
-          </AppText>
-          <AppText variant="heading" size={17} style={{ color: '#fff' }}>
-            Something just for you
-          </AppText>
-        </View>
-      </View>
 
       <View style={styles.messageMeta}>
         <View style={styles.metaTextContainer}>
@@ -578,7 +608,8 @@ const Confidential: React.FC = () => {
         )}
       </View>
     </View>
-  );
+    );
+  };
 
   const renderMediaViewer = () => {
     if (!mediaDataUri) {
@@ -1021,6 +1052,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#E06C6C',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
   fromText: {
     fontSize: 11,

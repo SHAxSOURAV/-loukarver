@@ -10,6 +10,7 @@ import { AppText } from "../../components/ui/AppText";
 import { BottomSheet } from "../../components/ui/BottomSheet";
 import { AppButton } from "../../components/ui/AppButton";
 import { AppTextInput } from "../../components/ui/AppTextInput";
+import { showPartnerPicture } from "./PartnerPictureViewer";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getVibeProfile,
@@ -560,7 +561,20 @@ const SamVibeNav: React.FC<SamVibeNavProps> = ({ onPartnerChange }) => {
       {/* Active Connection Card */}
       <Pressable style={styles.samCard} onPress={() => setSwitchSheet(true)}>
         <View style={styles.samLeft}>
-          <View style={{ position: 'relative' }}>
+          <Pressable
+            style={{ position: 'relative' }}
+            onPress={(e) => {
+              e.stopPropagation();
+              if (activeConnection) {
+                showPartnerPicture({
+                  context: 'vibe',
+                  partnerId: activeConnection.user_id,
+                  fallbackUrl: activeConnection.profile_picture,
+                  name: activePartnerName,
+                });
+              }
+            }}
+          >
             {activeConnection?.profile_picture ? (
               <Image 
                 source={{ uri: activeConnection.profile_picture.startsWith('http') ? activeConnection.profile_picture : `${API_BASE}/${activeConnection.profile_picture.replace(/\\/g, '/')}` }} 
@@ -576,7 +590,7 @@ const SamVibeNav: React.FC<SamVibeNavProps> = ({ onPartnerChange }) => {
             {activeConnection?.is_online && (
               <View style={{ position: 'absolute', bottom: -2, right: -2, width: 12, height: 12, borderRadius: 6, backgroundColor: '#4CAF50', borderWidth: 2, borderColor: '#ece5dd' }} />
             )}
-          </View>
+          </Pressable>
           <View>
             <AppText variant="heading" size={14}>
               {activePartnerName}
@@ -1242,7 +1256,18 @@ const SamVibeNav: React.FC<SamVibeNavProps> = ({ onPartnerChange }) => {
                   }}
                   onLongPress={() => handleDeleteConnection(conn.user_id, conn.name)}
                 >
-                  <View style={{ position: 'relative' }}>
+                  <Pressable
+                    style={{ position: 'relative' }}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      showPartnerPicture({
+                        context: 'vibe',
+                        partnerId: conn.user_id,
+                        fallbackUrl: conn.profile_picture,
+                        name: conn.name,
+                      });
+                    }}
+                  >
                     {conn.profile_picture ? (
                       <Image 
                         source={{ uri: conn.profile_picture.startsWith('http') ? conn.profile_picture : `${API_BASE}/${conn.profile_picture.replace(/\\/g, '/')}` }} 
@@ -1258,7 +1283,7 @@ const SamVibeNav: React.FC<SamVibeNavProps> = ({ onPartnerChange }) => {
                     {conn.is_online && (
                       <View style={{ position: 'absolute', bottom: 0, right: 0, width: 14, height: 14, borderRadius: 7, backgroundColor: '#4CAF50', borderWidth: 2, borderColor: i === activeIdx ? Colors.accent : Colors.bone }} />
                     )}
-                  </View>
+                  </Pressable>
                   <View style={{ flex: 1, paddingLeft: 12 }}>
                     <AppText variant="heading" size={18} color={i === activeIdx ? Colors.white : Colors.ink}>
                       {conn.name}
