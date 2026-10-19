@@ -316,7 +316,7 @@ class SecretService:
             {"$set": {"rewatch_status": "requested"}}
         )
         await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_REWATCH_REQUESTED", "secret_id": str(oid)})
-        await ws_manager.broadcast_to_user(doc["recipient_id"], {"type": "SECRET_REWATCH_REQUESTED", "secret_id": str(oid)})
+        await ws_manager.broadcast_to_user(doc["recipient_id"], {"type": "SECRET_UPDATED", "secret_id": str(oid)})
         
         # Send Notification to Sender (Bell Icon DB + Push)
         u_name, p_name = await self._get_names(user_id, doc["sender_id"])
@@ -346,7 +346,7 @@ class SecretService:
             {"$set": {"rewatch_status": "approved", "is_viewed": False, "status": "delivered"}}
         )
         await ws_manager.broadcast_to_user(doc["recipient_id"], {"type": "SECRET_REWATCH_APPROVED", "secret_id": str(oid)})
-        await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_REWATCH_APPROVED", "secret_id": str(oid)})
+        await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_UPDATED", "secret_id": str(oid)})
         
         # Send Notification (Bell Icon DB + Push)
         u_name, p_name = await self._get_names(user_id, doc["recipient_id"])
@@ -358,7 +358,7 @@ class SecretService:
                 title=f"{u_name} Approved! ✨",
                 message="You have 24 hours to rewatch their secret.",
                 type=NotificationType.CONFIDENTIAL_MESSAGE,
-                metadata={"screen": "SecretHistory", "secret_id": str(oid), "url": "samesy://secrethistory"}
+                metadata={"screen": "SecretHistory", "secret_id": str(oid)}
             )
         ))
 
@@ -376,7 +376,7 @@ class SecretService:
             {"$set": {"rewatch_status": "denied"}}
         )
         await ws_manager.broadcast_to_user(doc["recipient_id"], {"type": "SECRET_REWATCH_DENIED", "secret_id": str(oid)})
-        await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_REWATCH_DENIED", "secret_id": str(oid)})
+        await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_UPDATED", "secret_id": str(oid)})
         
         # Send Notification (Bell Icon DB + Push)
         u_name, p_name = await self._get_names(user_id, doc["recipient_id"])
@@ -388,7 +388,7 @@ class SecretService:
                 title="Rewatch Denied",
                 message=f"{u_name} chose to keep it a secret.",
                 type=NotificationType.CONFIDENTIAL_MESSAGE,
-                metadata={"screen": "Connect", "secret_id": str(oid), "url": "samesy://connect"}
+                metadata={"screen": "SecretHistory", "secret_id": str(oid)}
             )
         ))
 
