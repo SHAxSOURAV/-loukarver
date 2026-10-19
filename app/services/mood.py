@@ -125,7 +125,12 @@ class MoodService:
             docs = await cursor.to_list(length=None)
             
         results = []
+        seen_names = set()
         for d in docs:
+            name_lower = d.get("name", "").strip().lower()
+            if name_lower in seen_names:
+                continue
+            seen_names.add(name_lower)
             d["id"] = str(d["_id"])
             del d["_id"]
             results.append(d)
@@ -196,6 +201,18 @@ class MoodService:
                             timezone="UTC"
                         )
                     )
+                    # Real-time WebSocket broadcast to partner
+                    from app.core.websocket import ws_manager
+                    await ws_manager.broadcast_to_user(partner_id, {
+                        "type": "STATE_UPDATE",
+                        "message": f"{user_name} is feeling {mood_name}.",
+                        "data": {
+                            "mood_name": mood_name,
+                            "mood_symbol": mood_option["symbol"],
+                            "author_name": user_name,
+                            "is_partner": True
+                        }
+                    })
         except Exception as e:
             print(f"Failed to send mood change notification: {e}")
         
