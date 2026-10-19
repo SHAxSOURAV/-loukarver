@@ -70,7 +70,7 @@ export const ProfessionalVideoPlayer: React.FC<ProfessionalVideoPlayerProps> = (
   // Initialize expo-video player directly with the remote streaming URI
   const player = useVideoPlayer(videoSource || uri, (p) => {
     p.loop = false;
-    p.timeUpdateEventInterval = 0.25;
+    p.timeUpdateEventInterval = 0.5;
     p.play();
   });
 
