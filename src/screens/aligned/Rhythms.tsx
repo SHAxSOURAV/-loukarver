@@ -182,6 +182,7 @@ const Rhythms: React.FC = () => {
       if (lc && lc.success) {
         setLifecycle(lc);
       }
+      DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
     } catch (e) {
       console.log("Failed to update cycle dates", e);
     } finally {
@@ -203,6 +204,7 @@ const Rhythms: React.FC = () => {
       if (lc && lc.success) {
         setLifecycle(lc);
       }
+      DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
     } catch (e) {
       console.log("Failed to update history date", e);
     } finally {
@@ -218,6 +220,7 @@ const Rhythms: React.FC = () => {
       if (lc && lc.success) {
         setLifecycle(lc);
       }
+      DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
     } catch (e) {
       console.log("Failed to delete history date", e);
     } finally {
@@ -599,69 +602,69 @@ const Rhythms: React.FC = () => {
           </AppText>
 
           {/* Cycle Phases */}
+          {/* Cycle Phases */}
           {[
             {
               phase: "Menstrual",
               days: "Days 1-5",
               desc: "Estrogen and progesterone at their lowest. The uterus sheds. Energy often low; body in reset.",
-              active: false,
             },
             {
               phase: "Follicular",
               days: "Days 6-13",
               desc: "FSH drives follicle development. Estrogen climbs. Energy, mood, and openness usually rise.",
-              active: true,
             },
             {
               phase: "Ovulatory",
               days: "Days 14-16",
               desc: "LH surge releases a mature egg. Estrogen peaks. Often the most expressive, social, confident window.",
-              active: false,
             },
             {
               phase: "Luteal",
               days: "Days 17-28",
               desc: "Progesterone dominant. Body preparing for possible implantation. Later days can feel inward, more sensitive.",
-              active: false,
             },
-          ].map((item, i) => (
-            <View
-              key={i}
-              style={[styles.phaseRow, item.active && styles.activePhase]}
-            >
-              <View style={{ flex: 1 }}>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <AppText
-                    variant="heading"
-                    size={13}
-                    color={item.active ? "#fff" : Colors.ink}
+          ].map((item, i) => {
+            const isActive = (currentPhase || "").toLowerCase().trim() === item.phase.toLowerCase().trim();
+            return (
+              <View
+                key={i}
+                style={[styles.phaseRow, isActive && styles.activePhase]}
+              >
+                <View style={{ flex: 1 }}>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                    }}
                   >
-                    {item.phase}
-                  </AppText>
+                    <AppText
+                      variant="heading"
+                      size={13}
+                      color={isActive ? "#fff" : Colors.ink}
+                    >
+                      {item.phase}
+                    </AppText>
+                    <AppText
+                      variant="mono"
+                      color={isActive ? "#ddd" : Colors.muted}
+                      style={{ fontSize: 10 }}
+                    >
+                      {item.days}
+                    </AppText>
+                  </View>
                   <AppText
-                    variant="mono"
-                    color={item.active ? "#ddd" : Colors.muted}
-                    style={{ fontSize: 10 }}
+                    variant="serifItalic"
+                    size={14}
+                    color={isActive ? "#ddd" : Colors.muted}
+                    style={{ marginTop: 6, lineHeight: 20 }}
                   >
-                    {item.days}
+                    {item.desc}
                   </AppText>
                 </View>
-                <AppText
-                  variant="serifItalic"
-                  size={14}
-                  color={item.active ? "#ddd" : Colors.muted}
-                  style={{ marginTop: 6, lineHeight: 20 }}
-                >
-                  {item.desc}
-                </AppText>
               </View>
-            </View>
-          ))}
+            );
+          })}
 
           {userGender === "Female" && (
             <View style={{ marginTop: 20 }}>

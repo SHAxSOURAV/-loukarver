@@ -113,10 +113,21 @@ function useGlobalWebSocket() {
               DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
               DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
             } else if (data.type === "STATE_UPDATE" || data.type === "PULSE_UPDATED") {
+              const notifType = data.data?.type === 'CYCLE_UPDATE' ? 'Cycle Update' : 'Mood Change';
+              const notifTitle = data.data?.type === 'CYCLE_UPDATE' ? 'Cycle Update' : 'Partner Update';
               DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
-                type: 'Mood Change',
-                title: 'Partner Update',
+                type: notifType,
+                title: notifTitle,
                 message: data.message || 'Your partner updated their mood or status',
+                metadata: data.data || {},
+              });
+              DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
+              DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
+            } else if (data.type === "CYCLE_UPDATED") {
+              DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
+                type: 'Cycle Update',
+                title: 'Cycle Update',
+                message: data.message || 'Your partner updated her cycle dates.',
                 metadata: data.data || {},
               });
               DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
