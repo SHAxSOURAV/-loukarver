@@ -142,6 +142,8 @@ class NotificationService:
             unread_query["type"] = {"$in": types}
         if is_hidden is not None:
             unread_query["is_hidden"] = is_hidden
+        else:
+            unread_query["is_hidden"] = {"$ne": True}
 
         docs, total, unread_count = await asyncio.gather(
             cursor.to_list(length=size),
