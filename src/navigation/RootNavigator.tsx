@@ -28,6 +28,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getMe } from '../services/authApi';
 import { Platform, DeviceEventEmitter } from 'react-native';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
+import { handleNotificationDeepLink } from '../utils/notificationDeepLink';
 
 const Stack = createStackNavigator<RootStackParamList>();
 
@@ -84,7 +85,7 @@ const linking = {
           Dates: 'dates',
           Home: 'home',
           Map: 'map',
-          Us: 'us'
+          Future: 'future'
         }
       },
       SecretHistory: 'secrethistory'
@@ -110,19 +111,22 @@ export default function RootNavigator() {
         // — initialization is done ONCE in App.tsx at module level.
 
         const handleNotificationClick = (event: any) => {
-          const data = event?.notification?.additionalData;
-          if (data) {
-            const screen = data.screen;
-            const category = data.category || data.activeCategory || 'all';
+          try {
+            const notification = event?.notification;
+            const data = notification?.additionalData || {};
+            const payload = {
+              id: notification?.notificationId,
+              type: data.type || notification?.title,
+              title: notification?.title,
+              message: notification?.body,
+              metadata: data,
+            };
 
             if (navigationRef.isReady()) {
-              if (screen === 'Thread' || category) {
-                navigationRef.navigate('AlignedApp', {
-                  screen: 'Thread',
-                  params: { activeCategory: category }
-                });
-              }
+              handleNotificationDeepLink(payload, navigationRef);
             }
+          } catch (err) {
+            console.log('Error handling notification click:', err);
           }
         };
 

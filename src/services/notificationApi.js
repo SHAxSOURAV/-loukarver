@@ -10,8 +10,10 @@ export const scheduleNotification = async (data) => {
   return response.data;
 };
 
-export const triggerNotification = async (type, message) => {
-  const response = await api.post('/notifications/trigger', { type, message });
+export const triggerNotification = async (type, message, metadata = null) => {
+  const payload = { type, message };
+  if (metadata) payload.metadata = metadata;
+  const response = await api.post('/notifications/trigger', payload);
   return response.data;
 };
 

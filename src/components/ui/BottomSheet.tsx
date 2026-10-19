@@ -16,6 +16,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Colors } from "../../constants/colors";
 import { AppText } from "./AppText";
 import { AppButton } from "./AppButton";
@@ -202,10 +203,12 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
       onRequestClose={handleClose}
       statusBarTranslucent
     >
-      <Animated.View style={[styles.overlay, animatedOverlayStyle]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
-        {sheetContent}
-      </Animated.View>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <Animated.View style={[styles.overlay, animatedOverlayStyle]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
+          {sheetContent}
+        </Animated.View>
+      </GestureHandlerRootView>
     </Modal>
   );
 };

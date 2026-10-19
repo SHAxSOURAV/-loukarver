@@ -108,12 +108,16 @@ const Moment: React.FC = () => {
     const sub1 = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', debouncedRefresh);
     const sub2 = DeviceEventEmitter.addListener('ALIGNMENT_BONDED', debouncedRefresh);
     const sub3 = DeviceEventEmitter.addListener('ALIGNMENT_BROKEN', debouncedRefresh);
+    const subWatch = DeviceEventEmitter.addListener('OPEN_WATCH_TOGETHER', () => {
+      setActiveSheet('watchTogether');
+    });
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       sub1.remove();
       sub2.remove();
       sub3.remove();
+      subWatch.remove();
     };
   }, []);
 

@@ -15,6 +15,7 @@ import { Colors } from '../../constants/colors';
 import { AppText } from './AppText';
 import { navigationRef } from '../../navigation/RootNavigator';
 import { markNotificationSeen } from '../../services/notificationApi';
+import { handleNotificationDeepLink } from '../../utils/notificationDeepLink';
 
 export interface InAppNotificationPayload {
   id?: string;
@@ -120,7 +121,6 @@ export const InAppNotificationBanner: React.FC = () => {
 
   const handlePress = () => {
     if (!notification) return;
-    const { type, metadata } = notification;
 
     if (notification.id) {
       markNotificationSeen(notification.id).catch(() => {});
@@ -129,26 +129,7 @@ export const InAppNotificationBanner: React.FC = () => {
 
     if (navigationRef.isReady()) {
       try {
-        if (metadata?.screen === 'Thread' || type === 'Thread Message' || type === 'new_thread_message') {
-          navigationRef.navigate('AlignedApp', {
-            screen: 'Thread',
-            params: { activeCategory: metadata?.category || 'all' },
-          });
-        } else if (type?.includes('Date') || type === 'Proposal') {
-          navigationRef.navigate('AlignedApp', { screen: 'Dates' });
-        } else if (type?.includes('Map')) {
-          navigationRef.navigate('AlignedApp', { screen: 'Map' });
-        } else if (type?.includes('Milestone') || type?.includes('Us Section')) {
-          navigationRef.navigate('AlignedApp', { screen: 'Us' });
-        } else if (type?.includes('Confidential') || metadata?.screen === 'SecretHistory') {
-          navigationRef.navigate('SecretHistory');
-        } else {
-          // Default: go to Home and open presence history sheet
-          navigationRef.navigate('AlignedApp', { screen: 'Home' });
-          setTimeout(() => {
-            DeviceEventEmitter.emit('OPEN_PRESENCE_HISTORY');
-          }, 200);
-        }
+        handleNotificationDeepLink(notification, navigationRef);
       } catch (err) {
         console.log('Error navigating from notification banner:', err);
       }

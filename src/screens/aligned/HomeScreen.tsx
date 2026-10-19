@@ -92,9 +92,21 @@ export const HomeScreen: React.FC = () => {
     const sub = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', () => {
       setRefreshTrigger(prev => prev + 1);
     });
+    const subCheckin = DeviceEventEmitter.addListener('OPEN_CHECKIN_SHEET', (sheetType?: string) => {
+      setSheet(sheetType || 'side-by-side');
+    });
+    const subRitual = DeviceEventEmitter.addListener('OPEN_PARTNER_RITUALS', () => {
+      setSheet('partner_ritual_history');
+    });
+    const subMood = DeviceEventEmitter.addListener('OPEN_MOOD_SELECTOR', () => {
+      setSheet('mood_selector');
+    });
     return () => {
       clearInterval(timer);
       sub.remove();
+      subCheckin.remove();
+      subRitual.remove();
+      subMood.remove();
     };
   }, []);
 

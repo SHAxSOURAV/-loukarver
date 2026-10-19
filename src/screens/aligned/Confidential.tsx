@@ -288,10 +288,6 @@ const Confidential: React.FC = () => {
         setUploadProgress(percent);
       });
       setUploadProgress(100);
-      triggerNotification(
-        "Confidential Message",
-        isVideo ? "Sent a confidential video" : "Sent a confidential secret"
-      ).catch(() => {});
       CustomAlert.alert(
         "Delivered",
         isVideo ? "Confidential video sent successfully!" : "Secret photo sent successfully!"

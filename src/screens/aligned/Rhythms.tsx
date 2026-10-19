@@ -164,9 +164,17 @@ const Rhythms: React.FC = () => {
     };
 
     const sub = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', debouncedLoad);
+    const subCycle = DeviceEventEmitter.addListener('OPEN_RHYTHMS_CYCLE', () => {
+      setActiveSheet('herRhythm');
+    });
+    const subState = DeviceEventEmitter.addListener('OPEN_YOUR_STATE', () => {
+      setActiveSheet('yourState');
+    });
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       sub.remove();
+      subCycle.remove();
+      subState.remove();
     };
   }, []);
 

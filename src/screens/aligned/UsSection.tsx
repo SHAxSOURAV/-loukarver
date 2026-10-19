@@ -193,6 +193,11 @@ const UsSection: React.FC<UsSectionProps> = ({ refreshTrigger = 0 }) => {
     const sub2 = DeviceEventEmitter.addListener('US_SECTION_UPDATED', debouncedLoadData);
     const sub3 = DeviceEventEmitter.addListener('ALIGNMENT_BONDED', debouncedLoadData);
     const sub4 = DeviceEventEmitter.addListener('ALIGNMENT_BROKEN', debouncedLoadData);
+    const sub5 = DeviceEventEmitter.addListener('SET_US_SECTION_TAB', (tab: UsTab) => {
+      if (tab) {
+        setActiveUsTab(tab);
+      }
+    });
 
     return () => {
       if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
@@ -200,6 +205,7 @@ const UsSection: React.FC<UsSectionProps> = ({ refreshTrigger = 0 }) => {
       sub2.remove();
       sub3.remove();
       sub4.remove();
+      sub5.remove();
     };
   }, [debouncedLoadData, loadData, refreshTrigger]);
 

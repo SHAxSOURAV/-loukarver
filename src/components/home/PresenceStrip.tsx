@@ -17,6 +17,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { markNotificationSeen, markAllNotificationsSeen, markNotificationUnread, deleteNotification, hideNotification, unhideNotification, clearAllNotifications } from '../../services/notificationApi';
 import QRCode from 'react-native-qrcode-svg';
 import { useNavigation } from '@react-navigation/native';
+import { handleNotificationDeepLink } from '../../utils/notificationDeepLink';
 
 export interface PresenceStripProps {
   onRedirect?: (type: string, data?: any) => void;
@@ -561,6 +562,7 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
         onClose={() => setIsSheetOpen(false)}
         title={`${partnerName}'s Activity`}
         kicker="PRESENCE HISTORY"
+        noScroll
       >
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 10, paddingHorizontal: 20, marginTop: 10 }}>
           <Pressable onPress={() => {
@@ -703,26 +705,7 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
                               console.log('Error marking notification as seen:', err);
                             }
                           }
-                          if (n.type === 'Partner Check-in') {
-                            setIsSheetOpen(false);
-                            if (onRedirect) onRedirect('Partner Check-in', partner);
-                          } else if (n.type === 'Ritual Completed') {
-                            setIsSheetOpen(false);
-                            if (onRedirect) onRedirect('Ritual Completed', partner);
-                          } else if (n.type === 'Thread Message' || n.type === 'Thread' || n.metadata?.screen === 'Thread' || n.metadata?.category) {
-                            setIsSheetOpen(false);
-                            const category = (n.metadata?.category || '').toLowerCase();
-                            nav.navigate('Thread', { activeCategory: category });
-                          } else if (n.type?.includes('Date') || n.type === 'Proposal') {
-                            setIsSheetOpen(false);
-                            nav.navigate('Dates');
-                          } else if (n.type?.includes('Map')) {
-                            setIsSheetOpen(false);
-                            nav.navigate('Map');
-                          } else if (n.type?.includes('Milestone') || n.type?.includes('Us Section')) {
-                            setIsSheetOpen(false);
-                            nav.navigate('Us');
-                          }
+                          handleNotificationDeepLink(n, nav, () => setIsSheetOpen(false));
                         }}
                       >
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
