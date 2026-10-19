@@ -76,7 +76,7 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
 
       if (notificationsRes.success && notificationsRes.data) {
         const presenceOnly = notificationsRes.data.filter((n: any) => [
-          'Presence', 'Partner Check-in', 'Ritual Completed', 'Proposal', 'Reunion', 'Mood Change',
+          'Partner Check-in', 'Ritual Completed', 'Proposal', 'Reunion', 'Mood Change',
           'Cycle Update', 'Browse Ideas', 'Thinking of You', 'Watch Together',
           'Confidential Message', 'Date Added', 'Milestone Step', 'Us Section Update',
           'Map Create', 'Map Delete', 'Thread Message', 'Milestone', 'Map Update', 'State Update',
