@@ -1,4 +1,4 @@
-﻿{
+{
     "expo":  {
                  "name":  "Samesy",
                  "slug":  "aligned-rn",
@@ -26,6 +26,7 @@
                                            }
                          },
                  "android":  {
+                                 "usesCleartextTraffic": true,
                                  "adaptiveIcon":  {
                                                       "backgroundColor":  "#F4EEE4"
                                                   },
