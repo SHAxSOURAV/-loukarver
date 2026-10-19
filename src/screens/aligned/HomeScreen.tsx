@@ -89,7 +89,13 @@ export const HomeScreen: React.FC = () => {
     const timer = setInterval(() => {
       setCurrentDate(new Date());
     }, 30_000);
-    return () => clearInterval(timer);
+    const sub = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', () => {
+      setRefreshTrigger(prev => prev + 1);
+    });
+    return () => {
+      clearInterval(timer);
+      sub.remove();
+    };
   }, []);
 
   const onRefresh = useCallback(() => {
@@ -220,7 +226,12 @@ export const HomeScreen: React.FC = () => {
           if (theirs) setPartnerMood(theirs);
         }
 
-        if (opts?.data) setMoodOptions(opts.data);
+        if (opts?.data) {
+          const unique = opts.data.filter((item: any, idx: number, arr: any[]) =>
+            idx === arr.findIndex((t: any) => (t.name || "").trim().toLowerCase() === (item.name || "").trim().toLowerCase())
+          );
+          setMoodOptions(unique);
+        }
         setIsLoadingMood(false);
 
         if (rituals?.data) {
@@ -322,6 +333,7 @@ export const HomeScreen: React.FC = () => {
         const mine = moods.data.find((m: any) => !m.is_partner);
         if (mine) setMyMood(mine);
       }
+      DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
       setSheet(null);
     } catch (e) {
       console.log("Error logging mood:", e);
