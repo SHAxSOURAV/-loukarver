@@ -131,13 +131,18 @@ class DateService:
         
         try:
             await ws_manager.broadcast_to_user(partner_id, {"type": "DATE_UPDATED"})
+            names = await self._get_names(user_id, partner_id)
+            user_name = names.get(user_id, "Your partner")
+            where_text = f" at \"{payload.where}\"" if payload.where else ""
+            date_text = f" on {payload.date}" if payload.date else ""
             await notification_service.schedule_notification(
                 sender_id=user_id,
                 payload=NotificationCreate(
                     recipient_id=partner_id,
-                    title="New Date Proposal!",
-                    message="Your partner proposed a new date.",
-                    type=NotificationType.SYSTEM
+                    title=f"🍷 Date Proposal from {user_name}!",
+                    message=f"{user_name} proposed a date{where_text}{date_text}. Tap to respond!",
+                    type=NotificationType.SYSTEM,
+                    metadata={"screen": "Dates", "date_id": new_doc["id"], "action": "proposed"}
                 )
             )
             try:
@@ -265,13 +270,19 @@ class DateService:
         target_id = existing["creator_id"] if user_id == existing["partner_id"] else existing["partner_id"]
         try:
             await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
+            names = await self._get_names(user_id, target_id)
+            user_name = names.get(user_id, "Your partner")
+            venue = updates.get("where") or existing.get("where") or "your date"
+            new_dt = updates.get("date") or existing.get("date", "")
+            time_info = f" for {new_dt}" if new_dt else ""
             await notification_service.schedule_notification(
                 sender_id=user_id,
                 payload=NotificationCreate(
                     recipient_id=target_id,
-                    title="Date Rescheduled!",
-                    message="Your partner updated the date details.",
-                    type=NotificationType.SYSTEM
+                    title=f"🗓️ Date Rescheduled by {user_name}",
+                    message=f"{user_name} updated the plans for \"{venue}\"{time_info}. Check out the new details!",
+                    type=NotificationType.SYSTEM,
+                    metadata={"screen": "Dates", "date_id": str(date_id), "action": "rescheduled"}
                 )
             )
         except Exception as e:
@@ -327,13 +338,17 @@ class DateService:
                 target_id = doc["creator_id"] if user_id == doc["partner_id"] else doc["partner_id"]
                 try:
                     await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
+                    names = await self._get_names(user_id, target_id)
+                    user_name = names.get(user_id, "Your partner")
+                    venue = doc.get("where", "the date")
                     await notification_service.schedule_notification(
                         sender_id=user_id,
                         payload=NotificationCreate(
                             recipient_id=target_id,
                             title="Date Proposal Cancelled",
-                            message="Your partner cancelled their date proposal.",
-                            type=NotificationType.SYSTEM
+                            message=f"{user_name} cancelled their date proposal for \"{venue}\".",
+                            type=NotificationType.SYSTEM,
+                            metadata={"screen": "Dates", "date_id": str(date_id), "action": "cancelled"}
                         )
                     )
                 except Exception as e:
@@ -366,13 +381,23 @@ class DateService:
         target_id = doc["creator_id"] if user_id == doc["partner_id"] else doc["partner_id"]
         try:
             await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
+            names = await self._get_names(user_id, target_id)
+            user_name = names.get(user_id, "Your partner")
+            venue = doc.get("where", "the date")
+            if response.action == "accept":
+                title = f"💖 Date Accepted by {user_name}!"
+                msg = f"{user_name} accepted your date at \"{venue}\"! Get ready!"
+            else:
+                title = "Date Proposal Declined"
+                msg = f"{user_name} couldn't make it for \"{venue}\"."
             await notification_service.schedule_notification(
                 sender_id=user_id,
                 payload=NotificationCreate(
                     recipient_id=target_id,
-                    title="Date Response!",
-                    message=f"Your partner {response.action}ed the date proposal.",
-                    type=NotificationType.SYSTEM
+                    title=title,
+                    message=msg,
+                    type=NotificationType.SYSTEM,
+                    metadata={"screen": "Dates", "date_id": str(date_id), "action": response.action}
                 )
             )
         except Exception as e:
@@ -416,15 +441,19 @@ class DateService:
         target_id = doc["creator_id"] if user_id == doc["partner_id"] else doc["partner_id"]
         try:
             await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
+            names = await self._get_names(user_id, target_id)
+            user_name = names.get(user_id, "Your partner")
+            venue = doc.get("where", "your date")
             
             if updates.get("status") == DateStatus.COMPLETED:
                 await notification_service.schedule_notification(
                     sender_id=user_id,
                     payload=NotificationCreate(
                         recipient_id=target_id,
-                        title="Date Completed!",
-                        message="Your partner also marked the date as completed.",
-                        type=NotificationType.SYSTEM
+                        title="🎉 Date Completed!",
+                        message=f"{user_name} confirmed completion of your date at \"{venue}\"! Don't forget to add your reviews & memories.",
+                        type=NotificationType.SYSTEM,
+                        metadata={"screen": "Dates", "date_id": str(date_id), "action": "completed"}
                     )
                 )
             else:
@@ -432,9 +461,10 @@ class DateService:
                     sender_id=user_id,
                     payload=NotificationCreate(
                         recipient_id=target_id,
-                        title="Date Completion",
-                        message="Your partner marked the date as completed. Tap to confirm.",
-                        type=NotificationType.SYSTEM
+                        title="🥂 Confirm Date Completion",
+                        message=f"{user_name} marked your date at \"{venue}\" as completed. Tap to confirm!",
+                        type=NotificationType.SYSTEM,
+                        metadata={"screen": "Dates", "date_id": str(date_id), "action": "complete_requested"}
                     )
                 )
         except Exception as e:
@@ -470,6 +500,28 @@ class DateService:
             {"$push": {"reviews": review}, "$set": {"updated_at": datetime.now(timezone.utc)}},
             return_document=True
         )
+
+        target_id = doc["creator_id"] if user_id == doc["partner_id"] else doc["partner_id"]
+        try:
+            await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
+            names = await self._get_names(user_id, target_id)
+            user_name = names.get(user_id, "Your partner")
+            venue = doc.get("where", "your date")
+            has_photos = len(review_payload.photos) > 0
+            photo_txt = " and photos" if has_photos else ""
+            await notification_service.schedule_notification(
+                sender_id=user_id,
+                payload=NotificationCreate(
+                    recipient_id=target_id,
+                    title="📸 New Date Memory & Review!",
+                    message=f"{user_name} added a review{photo_txt} for your date at \"{venue}\". Tap to see!",
+                    type=NotificationType.SYSTEM,
+                    metadata={"screen": "Dates", "date_id": str(date_id), "action": "review_added"}
+                )
+            )
+        except Exception as e:
+            print(f"Failed to notify partner on add_review: {e}")
+
         return await self._map_date(result, doc["timezone"])
 
     async def update_review(self, date_id: str, user_id: str, review_payload: DateReviewCreate) -> Dict[str, Any]:
@@ -556,13 +608,18 @@ class DateService:
         target_id = doc["creator_id"] if user_id == doc["partner_id"] else doc["partner_id"]
         try:
             await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
+            names = await self._get_names(user_id, target_id)
+            user_name = names.get(user_id, "Your partner")
+            venue = doc.get("where", "your date")
+            note_str = f" \"{note}\"" if note else ""
             await notification_service.schedule_notification(
                 sender_id=user_id,
                 payload=NotificationCreate(
                     recipient_id=target_id,
-                    title="Running Late!",
-                    message=f"Your partner will be {delay} late. {note}",
-                    type=NotificationType.SYSTEM
+                    title="⏰ Running Late!",
+                    message=f"{user_name} will be {delay} late for \"{venue}\".{note_str}",
+                    type=NotificationType.SYSTEM,
+                    metadata={"screen": "Dates", "date_id": str(date_id), "action": "ping_late"}
                 )
             )
         except Exception as e:
@@ -588,13 +645,18 @@ class DateService:
         target_id = doc["creator_id"] if user_id == doc["partner_id"] else doc["partner_id"]
         try:
             await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
+            names = await self._get_names(user_id, target_id)
+            user_name = names.get(user_id, "Your partner")
+            venue = doc.get("where", "the date")
+            reason_str = f": \"{reason}\"" if reason else "."
             await notification_service.schedule_notification(
                 sender_id=user_id,
                 payload=NotificationCreate(
                     recipient_id=target_id,
-                    title="Date Cancel Request",
-                    message=f"Your partner requested to cancel the date: {reason}",
-                    type=NotificationType.SYSTEM
+                    title="⚠️ Date Cancel Request",
+                    message=f"{user_name} requested to cancel your date at \"{venue}\"{reason_str}",
+                    type=NotificationType.SYSTEM,
+                    metadata={"screen": "Dates", "date_id": str(date_id), "action": "cancel_requested"}
                 )
             )
         except Exception as e:
@@ -622,14 +684,18 @@ class DateService:
         target_id = doc["creator_id"] if user_id == doc["partner_id"] else doc["partner_id"]
         try:
             await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
-            cancel_msg = "Your partner has cancelled the date proposal." if doc["status"] == DateStatus.PROPOSED else "Your partner has cancelled the date."
+            names = await self._get_names(user_id, target_id)
+            user_name = names.get(user_id, "Your partner")
+            venue = doc.get("where", "the date")
+            cancel_msg = f"{user_name} has cancelled the date proposal for \"{venue}\"." if doc["status"] == DateStatus.PROPOSED else f"{user_name} has cancelled your date at \"{venue}\"."
             await notification_service.schedule_notification(
                 sender_id=user_id,
                 payload=NotificationCreate(
                     recipient_id=target_id,
-                    title="Date Cancelled",
+                    title="❌ Date Cancelled",
                     message=cancel_msg,
-                    type=NotificationType.SYSTEM
+                    type=NotificationType.SYSTEM,
+                    metadata={"screen": "Dates", "date_id": str(date_id), "action": "cancelled"}
                 )
             )
         except Exception as e:
@@ -717,13 +783,17 @@ class DateService:
         target_id = found_review["user_id"]
         try:
             await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
+            names = await self._get_names(user_id, target_id)
+            user_name = names.get(user_id, "Your partner")
+            venue = doc.get("where", "your date")
             await notification_service.schedule_notification(
                 sender_id=user_id,
                 payload=NotificationCreate(
                     recipient_id=target_id,
-                    title="Photo Deletion Request",
-                    message="Your partner wants to delete a photo from your memory.",
-                    type=NotificationType.SYSTEM
+                    title="🗑️ Photo Deletion Request",
+                    message=f"{user_name} requested to delete a photo from your memory at \"{venue}\".",
+                    type=NotificationType.SYSTEM,
+                    metadata={"screen": "Dates", "date_id": str(date_id), "action": "photo_delete_requested"}
                 )
             )
         except Exception as e:
@@ -761,7 +831,23 @@ class DateService:
         )
         
         target_id = doc["creator_id"] if user_id == doc["partner_id"] else doc["partner_id"]
-        await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
+        try:
+            await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
+            names = await self._get_names(user_id, target_id)
+            user_name = names.get(user_id, "Your partner")
+            venue = doc.get("where", "your date")
+            await notification_service.schedule_notification(
+                sender_id=user_id,
+                payload=NotificationCreate(
+                    recipient_id=target_id,
+                    title="Photo Deletion Approved",
+                    message=f"{user_name} approved deleting the photo from your date at \"{venue}\".",
+                    type=NotificationType.SYSTEM,
+                    metadata={"screen": "Dates", "date_id": str(date_id), "action": "photo_delete_approved"}
+                )
+            )
+        except Exception as e:
+            print(f"Failed to notify partner on approve_delete_photo: {e}")
         return await self._map_date(result, doc["timezone"])
         
     async def reject_delete_photo(self, date_id: str, user_id: str, photo_url: str) -> Dict[str, Any]:
@@ -779,7 +865,23 @@ class DateService:
         )
         
         target_id = doc["creator_id"] if user_id == doc["partner_id"] else doc["partner_id"]
-        await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
+        try:
+            await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
+            names = await self._get_names(user_id, target_id)
+            user_name = names.get(user_id, "Your partner")
+            venue = doc.get("where", "your date")
+            await notification_service.schedule_notification(
+                sender_id=user_id,
+                payload=NotificationCreate(
+                    recipient_id=target_id,
+                    title="Photo Kept in Memory",
+                    message=f"{user_name} decided to keep the photo in your date memory at \"{venue}\".",
+                    type=NotificationType.SYSTEM,
+                    metadata={"screen": "Dates", "date_id": str(date_id), "action": "photo_delete_rejected"}
+                )
+            )
+        except Exception as e:
+            print(f"Failed to notify partner on reject_delete_photo: {e}")
         return await self._map_date(result, doc["timezone"])
 
 date_service = DateService()

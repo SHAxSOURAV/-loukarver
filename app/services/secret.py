@@ -106,13 +106,18 @@ class SecretService:
         # Fire websocket to recipient
         await ws_manager.broadcast_to_user(partner_id, {"type": "SECRET_DELIVERED"})
         
-        # Send Push Notification
+        # Send Notification via notification_service (Saves to Bell Icon DB + OneSignal Push)
         u_name, p_name = await self._get_names(sender_id, partner_id)
-        asyncio.create_task(notification_service.send_onesignal_push(
-            partner_id, 
-            f"New Secret from {u_name}!", 
-            "They sent you something for your eyes only 🤫",
-            {"url": "samesy://connect"}
+        from app.schemas.notification import NotificationCreate, NotificationType
+        asyncio.create_task(notification_service.schedule_notification(
+            sender_id=sender_id,
+            payload=NotificationCreate(
+                recipient_id=partner_id,
+                title=f"New Secret from {u_name}! 🤫",
+                message="They sent you something for your eyes only.",
+                type=NotificationType.CONFIDENTIAL_MESSAGE,
+                metadata={"screen": "Connect", "secret_id": new_doc["id"], "url": "samesy://connect"}
+            )
         ))
         
         return new_doc
@@ -313,13 +318,18 @@ class SecretService:
         await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_REWATCH_REQUESTED", "secret_id": str(oid)})
         await ws_manager.broadcast_to_user(doc["recipient_id"], {"type": "SECRET_REWATCH_REQUESTED", "secret_id": str(oid)})
         
-        # Send Push Notification to Sender
+        # Send Notification to Sender (Bell Icon DB + Push)
         u_name, p_name = await self._get_names(user_id, doc["sender_id"])
-        asyncio.create_task(notification_service.send_onesignal_push(
-            doc["sender_id"], 
-            f"{u_name} asked to rewatch!", 
-            "They want to see your secret one more time.",
-            {"url": "samesy://connect"}
+        from app.schemas.notification import NotificationCreate, NotificationType
+        asyncio.create_task(notification_service.schedule_notification(
+            sender_id=user_id,
+            payload=NotificationCreate(
+                recipient_id=doc["sender_id"],
+                title=f"{u_name} asked to rewatch! 🔄",
+                message="They want to see your secret one more time.",
+                type=NotificationType.CONFIDENTIAL_MESSAGE,
+                metadata={"screen": "Connect", "secret_id": str(oid), "url": "samesy://connect"}
+            )
         ))
         
     async def approve_rewatch(self, secret_id: str, user_id: str):
@@ -338,13 +348,18 @@ class SecretService:
         await ws_manager.broadcast_to_user(doc["recipient_id"], {"type": "SECRET_REWATCH_APPROVED", "secret_id": str(oid)})
         await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_REWATCH_APPROVED", "secret_id": str(oid)})
         
-        # Send Push Notification
+        # Send Notification (Bell Icon DB + Push)
         u_name, p_name = await self._get_names(user_id, doc["recipient_id"])
-        asyncio.create_task(notification_service.send_onesignal_push(
-            doc["recipient_id"], 
-            f"{u_name} Approved!", 
-            "You have 24 hours to rewatch their secret.",
-            {"url": "samesy://secrethistory"}
+        from app.schemas.notification import NotificationCreate, NotificationType
+        asyncio.create_task(notification_service.schedule_notification(
+            sender_id=user_id,
+            payload=NotificationCreate(
+                recipient_id=doc["recipient_id"],
+                title=f"{u_name} Approved! ✨",
+                message="You have 24 hours to rewatch their secret.",
+                type=NotificationType.CONFIDENTIAL_MESSAGE,
+                metadata={"screen": "SecretHistory", "secret_id": str(oid), "url": "samesy://secrethistory"}
+            )
         ))
 
     async def decline_rewatch(self, secret_id: str, user_id: str):
@@ -363,13 +378,18 @@ class SecretService:
         await ws_manager.broadcast_to_user(doc["recipient_id"], {"type": "SECRET_REWATCH_DENIED", "secret_id": str(oid)})
         await ws_manager.broadcast_to_user(doc["sender_id"], {"type": "SECRET_REWATCH_DENIED", "secret_id": str(oid)})
         
-        # Send Push Notification to Recipient
+        # Send Notification (Bell Icon DB + Push)
         u_name, p_name = await self._get_names(user_id, doc["recipient_id"])
-        asyncio.create_task(notification_service.send_onesignal_push(
-            doc["recipient_id"], 
-            f"Rewatch Denied", 
-            f"{u_name} chose to keep it a secret.",
-            {"url": "samesy://connect"}
+        from app.schemas.notification import NotificationCreate, NotificationType
+        asyncio.create_task(notification_service.schedule_notification(
+            sender_id=user_id,
+            payload=NotificationCreate(
+                recipient_id=doc["recipient_id"],
+                title="Rewatch Denied",
+                message=f"{u_name} chose to keep it a secret.",
+                type=NotificationType.CONFIDENTIAL_MESSAGE,
+                metadata={"screen": "Connect", "secret_id": str(oid), "url": "samesy://connect"}
+            )
         ))
 
     async def revoke_secret(self, secret_id: str, user_id: str):

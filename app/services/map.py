@@ -160,6 +160,27 @@ class MapService:
         if partner_id:
             from app.core.websocket import ws_manager
             await ws_manager.broadcast_to_user(partner_id, {"type": "MAP_UPDATED"})
+            try:
+                from app.services.notification import notification_service
+                from app.schemas.notification import NotificationCreate, NotificationType
+                names = await self._get_names(user_id, partner_id)
+                user_name = names.get(user_id, "Your partner")
+                place_title = new_doc.get("title") or payload.title or "a special spot"
+                place_loc = f" in {payload.city}" if payload.city else ""
+                await notification_service.schedule_notification(
+                    sender_id=user_id,
+                    payload=NotificationCreate(
+                        recipient_id=partner_id,
+                        title="📍 New Memory Pinned!",
+                        message=f"{user_name} pinned \"{place_title}\"{place_loc} on your couple map.",
+                        type=NotificationType.MAP_CREATE,
+                        scheduled_for=datetime.now(timezone.utc),
+                        timezone=payload.timezone or "UTC",
+                        metadata={"screen": "Map", "place_id": new_doc["id"]}
+                    )
+                )
+            except Exception as e:
+                print(f"Failed to notify partner on create_place: {e}")
 
         return await self._map_place(new_doc, payload.timezone, user_id)
 
@@ -404,6 +425,26 @@ class MapService:
         if partner_id:
             from app.core.websocket import ws_manager
             await ws_manager.broadcast_to_user(partner_id, {"type": "MAP_UPDATED"})
+            try:
+                from app.services.notification import notification_service
+                from app.schemas.notification import NotificationCreate, NotificationType
+                names = await self._get_names(user_id, partner_id)
+                user_name = names.get(user_id, "Your partner")
+                place_title = doc.get("title", "a place")
+                await notification_service.schedule_notification(
+                    sender_id=user_id,
+                    payload=NotificationCreate(
+                        recipient_id=partner_id,
+                        title="📸 New Memory Added!",
+                        message=f"{user_name} added a photo memory to \"{place_title}\".",
+                        type=NotificationType.MAP_UPDATE,
+                        scheduled_for=datetime.now(timezone.utc),
+                        timezone=payload.timezone or "UTC",
+                        metadata={"screen": "Map", "place_id": place_id, "moment_id": new_moment["id"]}
+                    )
+                )
+            except Exception as e:
+                print(f"Failed to notify partner on add_moment: {e}")
 
         return await self._map_place(result, payload.timezone, user_id)
 

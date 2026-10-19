@@ -1,7 +1,7 @@
 import time
 import urllib.parse
 from typing import Dict, Any, List, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import httpx
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -248,10 +248,37 @@ class YouTubeMusicService:
         user = await self.users.find_one({"_id": ObjectId(user_id)})
         if user and user.get("partner"):
             partner_id = user["partner"]["user_id"]
+            user_name = user.get("name", "Your partner")
             try:
                 await self._add_to_youtube_playlist(partner_id, track_id)
             except Exception:
                 pass # Ignore if partner hasn't linked youtube
+
+            # Broadcast WebSocket event
+            try:
+                from app.core.websocket import ws_manager
+                await ws_manager.broadcast_to_user(partner_id, {"type": "PLAYLIST_UPDATED", "track": new_track})
+            except Exception:
+                pass
+
+            # Send Notification to Partner (Bell Icon + Push)
+            try:
+                from app.services.notification import notification_service
+                from app.schemas.notification import NotificationCreate, NotificationType
+                await notification_service.schedule_notification(
+                    sender_id=user_id,
+                    payload=NotificationCreate(
+                        recipient_id=partner_id,
+                        title=f"🎵 {user_name} Added a Song!",
+                        message=f"{user_name} added \"{title}\" by {artist} to your shared playlist.",
+                        type=NotificationType.PLAYLIST_UPDATE,
+                        scheduled_for=datetime.now(timezone.utc),
+                        timezone="UTC",
+                        metadata={"screen": "Music", "track_id": track_id, "title": title, "artist": artist}
+                    )
+                )
+            except Exception as notif_err:
+                print(f"Failed to notify partner on add_track: {notif_err}")
 
     async def _add_to_youtube_playlist(self, user_id: str, video_id: str) -> None:
         token = await self._get_valid_token(user_id)

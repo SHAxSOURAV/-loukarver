@@ -91,15 +91,18 @@ class StreakSystem:
             partner_id = user["partner"].get("user_id")
             if partner_id:
                 try:
+                    user_name = user.get("name", "Your partner")
+                    ritual_name = payload.ritual_type.value if hasattr(payload.ritual_type, "value") else str(payload.ritual_type)
                     await notification_service.schedule_notification(
                         sender_id=user_id,
                         payload=NotificationCreate(
                             recipient_id=partner_id,
-                            title="Ritual Complete",
-                            message=f"{user.get('name', 'Your partner')} has completed their ritual.",
+                            title=f"🔥 Ritual Complete! ({current_streak} Day Streak)",
+                            message=f"{user_name} finished their {ritual_name} ritual for today! Keep the flame alive!",
                             type=NotificationType.RITUAL_COMPLETED,
                             scheduled_for=datetime.now(timezone.utc),
-                            timezone=payload.timezone
+                            timezone=payload.timezone,
+                            metadata={"screen": "Home", "streak": current_streak, "action": "ritual_completed"}
                         )
                     )
                 except Exception as e:

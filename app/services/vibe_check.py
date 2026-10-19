@@ -740,6 +740,28 @@ class VibeCheckService:
             }}
         )
         
+        # Notify inviter that partner accepted
+        from app.services.notification import notification_service
+        from app.schemas.notification import NotificationCreate, NotificationType
+        from app.core.websocket import ws_manager
+        
+        try:
+            partner_name = me.get("name", "Your partner")
+            await notification_service.schedule_notification(
+                sender_id=user_id,
+                payload=NotificationCreate(
+                    recipient_id=invite["inviter_id"],
+                    title="🎉 Partner Connected!",
+                    message=f"{partner_name} accepted your invite! You are now connected on VibeCheck.",
+                    type=NotificationType.VIBE_SYSTEM,
+                    metadata={"screen": "Home", "type": "vibe_check_connected", "partner_id": user_id}
+                )
+            )
+            await ws_manager.broadcast_to_user(invite["inviter_id"], {"type": "VIBE_CONNECTION_UPDATED"})
+            await ws_manager.broadcast_to_user(invite["inviter_id"], {"type": "NEW_NOTIFICATION"})
+        except Exception as e:
+            print(f"Failed to notify inviter on accept_invite: {e}")
+
         return VibeInviteAcceptResponse(
             success=True, 
             message=f"You are now connected with {invite['inviter_name']}!",

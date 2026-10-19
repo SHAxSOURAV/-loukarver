@@ -36,6 +36,8 @@ class NotificationType(str, Enum):
     ALIGNMENT_CONNECTED = "Alignment Connected!"
     RELATIONSHIP_REQUEST = "Alignment Request"
     RELATIONSHIP_ACCEPT = "Alignment Connected!"
+    PLAYLIST_UPDATE = "Playlist Update"
+    DATE_COMPLETION_REQUEST = "Date Completion Request"
 
 class NotificationStatus(str, Enum):
     SCHEDULED = "Scheduled"

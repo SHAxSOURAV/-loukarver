@@ -82,19 +82,23 @@ class WatchService:
         if partner_id:
             await ws_manager.broadcast_to_user(partner_id, {"type": "WATCH_UPDATED"})
             try:
+                user = await self.users.find_one({"_id": ObjectId(user_id)})
+                user_name = user.get("name", "Your partner") if user else "Your partner"
+                show_title = payload.show_name
                 await notification_service.schedule_notification(
                     sender_id=user_id,
                     payload=NotificationCreate(
                         recipient_id=partner_id,
-                        title="Watch Together",
-                        message=f"Your partner invited you to watch {payload.show_name}.",
+                        title=f"🎬 Watch Party Invite from {user_name}!",
+                        message=f"{user_name} invited you to watch \"{show_title}\" together on {payload.date} at {payload.time}.",
                         type=NotificationType.SYSTEM,
                         scheduled_for=datetime.now(timezone.utc),
-                        timezone="UTC"
+                        timezone="UTC",
+                        metadata={"screen": "Future", "session_id": str(result.inserted_id), "action": "watch_invite"}
                     )
                 )
             except Exception as e:
-                print(e)
+                print(f"Failed to send watch invite notification: {e}")
                 
         new_doc["id"] = str(result.inserted_id)
         
@@ -120,6 +124,24 @@ class WatchService:
         partner_id = next((uid for uid in doc["user_ids"] if uid != user_id), None)
         if partner_id:
             await ws_manager.broadcast_to_user(partner_id, {"type": "WATCH_UPDATED"})
+            try:
+                user = await self.users.find_one({"_id": ObjectId(user_id)})
+                user_name = user.get("name", "Your partner") if user else "Your partner"
+                show_title = doc.get("show_name", "the show")
+                await notification_service.schedule_notification(
+                    sender_id=user_id,
+                    payload=NotificationCreate(
+                        recipient_id=partner_id,
+                        title="🍿 Watch Party Accepted!",
+                        message=f"{user_name} accepted your invite to watch \"{show_title}\"!",
+                        type=NotificationType.SYSTEM,
+                        scheduled_for=datetime.now(timezone.utc),
+                        timezone="UTC",
+                        metadata={"screen": "Future", "session_id": session_id, "action": "watch_accepted"}
+                    )
+                )
+            except Exception as e:
+                print(f"Failed to send watch accepted notification: {e}")
             
         return await self._map_session(result, user_id)
 
@@ -198,19 +220,23 @@ class WatchService:
             await ws_manager.broadcast_to_user(partner_id, {"type": "WATCH_UPDATED"})
             if is_ready and doc[f"is_ready_user_{partner_idx+1}"]:
                 try:
+                    user = await self.users.find_one({"_id": ObjectId(user_id)})
+                    user_name = user.get("name", "Your partner") if user else "Your partner"
+                    show_title = doc.get("show_name", "your show")
                     await notification_service.schedule_notification(
                         sender_id=user_id,
                         payload=NotificationCreate(
                             recipient_id=partner_id,
-                            title="Ready to Watch!",
-                            message="Your partner is ready. Hit Play now!",
+                            title="🍿 Ready to Watch!",
+                            message=f"{user_name} is ready for \"{show_title}\"! Hit Play now!",
                             type=NotificationType.SYSTEM,
                             scheduled_for=datetime.now(timezone.utc),
-                            timezone="UTC"
+                            timezone="UTC",
+                            metadata={"screen": "Future", "session_id": session_id, "action": "watch_ready"}
                         )
                     )
                 except Exception as e:
-                    print(e)
+                    print(f"Failed to send watch ready notification: {e}")
                     
         return await self._map_session(result, user_id)
 

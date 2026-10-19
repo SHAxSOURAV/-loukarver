@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 from app.services.dates import date_service
 from app.services.notification import notification_service
-from app.schemas.notification import NotificationCreate
+from app.schemas.notification import NotificationCreate, NotificationType
 
 async def watch_dates():
     # Delay initial execution to ensure FastAPI event loop and Motor connections are fully initialized
@@ -20,14 +20,22 @@ async def watch_dates():
             cursor = date_service.dates_collection.find(query)
             async for doc in cursor:
                 # Need to ask for completion
+                venue = doc.get("where") or doc.get("title") or "your date"
                 for target_id in [doc["creator_id"], doc["partner_id"]]:
                     try:
-                        await notification_service.create_notification(
-                            user_id=target_id,
+                        await notification_service.schedule_notification(
+                            sender_id="system",
                             payload=NotificationCreate(
-                                title="Date Completed?",
-                                body="Did you complete your date? Tap to confirm.",
-                                type="DATE_COMPLETION_REQUEST"
+                                recipient_id=target_id,
+                                title="Date Completed? ✨",
+                                message=f"Did you complete your date at {venue}? Tap to confirm and save your memories!",
+                                type=NotificationType.DATE_COMPLETION_REQUEST,
+                                metadata={
+                                    "screen": "Dates",
+                                    "date_id": str(doc["_id"]),
+                                    "venue": venue,
+                                    "action": "confirm_completion"
+                                }
                             )
                         )
                     except Exception as e:

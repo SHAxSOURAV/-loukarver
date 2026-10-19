@@ -87,6 +87,10 @@ class NotificationService:
             "target_channel": "push",
             "headings": {"en": title},
             "contents": {"en": message},
+            "priority": 10,
+            "ios_badgeType": "Increase",
+            "ios_badgeCount": 1,
+            "ios_sound": "default",
         }
         if custom_data:
             payload["data"] = custom_data
@@ -283,9 +287,11 @@ class NotificationService:
         })
         
         if not existing:
+            user_name = user.get("name", "Your partner")
+            full_msg = f"{user_name} is {phrase} right now."
             new_doc = {
-                "title": "Presence",
-                "message": phrase,
+                "title": f"📍 {user_name}'s Status",
+                "message": full_msg,
                 "type": NotificationType.PRESENCE.value,
                 "timezone": payload.timezone,
                 "scheduled_for": now_utc,
@@ -293,9 +299,24 @@ class NotificationService:
                 "recipient_id": partner_id,
                 "status": NotificationStatus.DELIVERED.value, # Delivered immediately
                 "created_at": now_utc,
-                "delivered_at": now_utc
+                "delivered_at": now_utc,
+                "metadata": {"screen": "Home", "type": "presence"}
             }
-            await self.notifications_collection.insert_one(new_doc)
+            res = await self.notifications_collection.insert_one(new_doc)
+            from app.core.websocket import ws_manager
+            try:
+                await ws_manager.broadcast_to_user(partner_id, {
+                    "type": "NEW_NOTIFICATION",
+                    "notification": {
+                        "id": str(res.inserted_id),
+                        "type": NotificationType.PRESENCE.value,
+                        "title": f"📍 {user_name}'s Status",
+                        "message": full_msg,
+                        "metadata": {"screen": "Home", "type": "presence"}
+                    }
+                })
+            except Exception as e:
+                print(f"Failed to broadcast presence notification: {e}")
             return {"success": True, "message": f"Presence logged and notification '{phrase}' sent to partner."}
             
         return {"success": True, "message": "Presence logged. Notification skipped (already sent today)."}

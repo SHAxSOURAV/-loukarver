@@ -66,7 +66,29 @@ class MilestoneService:
 
         # Notify partner
         from app.core.websocket import ws_manager
-        await ws_manager.broadcast_to_user(partner_id, {"type": "MILESTONE_UPDATED"})
+        if partner_id:
+            await ws_manager.broadcast_to_user(partner_id, {"type": "MILESTONE_UPDATED"})
+            
+            if not payload.is_private:
+                try:
+                    from app.services.notification import notification_service
+                    from app.schemas.notification import NotificationCreate, NotificationType
+                    names = await self._get_names(user_id, partner_id)
+                    creator_name = names.get(user_id, "Your partner")
+                    await notification_service.schedule_notification(
+                        sender_id=user_id,
+                        payload=NotificationCreate(
+                            recipient_id=partner_id,
+                            title="🏆 New Shared Milestone!",
+                            message=f"{creator_name} created a new milestone: \"{payload.name}\"",
+                            type=NotificationType.MILESTONE,
+                            scheduled_for=datetime.now(timezone.utc),
+                            timezone=payload.timezone or "UTC",
+                            metadata={"screen": "Future", "milestone_id": new_doc["id"], "action": "created"}
+                        )
+                    )
+                except Exception as e:
+                    print(f"Failed to notify partner on create_milestone: {e}")
 
         return await self._map_milestone(new_doc, user_timezone=payload.timezone)
 
@@ -182,15 +204,18 @@ class MilestoneService:
             from app.services.notification import notification_service
             from app.schemas.notification import NotificationCreate, NotificationType
             await ws_manager.broadcast_to_user(partner_id, {"type": "MILESTONE_UPDATED"})
+            names = await self._get_names(user_id, partner_id)
+            sender_name = names.get(user_id, "Your partner")
             await notification_service.schedule_notification(
                 sender_id=user_id,
                 payload=NotificationCreate(
                     recipient_id=partner_id,
-                    title="Milestone Step",
-                    message="Partner added a step to a milestone",
+                    title="🎯 Milestone Step Added",
+                    message=f"{sender_name} added a step to \"{doc.get('name', 'Milestone')}\": \"{step_payload.text}\"",
                     type=NotificationType.MILESTONE_STEP,
                     scheduled_for=datetime.now(timezone.utc),
-                    timezone="UTC"
+                    timezone="UTC",
+                    metadata={"screen": "Future", "milestone_id": milestone_id, "step_id": new_step["id"]}
                 )
             )
 
@@ -284,16 +309,21 @@ class MilestoneService:
             from app.schemas.notification import NotificationCreate, NotificationType
             await ws_manager.broadcast_to_user(str(other_id), {"type": "MILESTONE_UPDATED"})
             
-            action = "completed" if new_status else "uncompleted"
+            names = await self._get_names(user_id, str(other_id))
+            sender_name = names.get(user_id, "Your partner")
+            action = "completed" if new_status else "reopened"
+            title = "✅ Milestone Step Completed!" if new_status else "Milestone Step Reopened"
+            step_text = current_step.get("text", "step")
             await notification_service.schedule_notification(
                 sender_id=user_id,
                 payload=NotificationCreate(
                     recipient_id=str(other_id),
-                    title="Milestone Step",
-                    message=f"Partner {action} a milestone step",
+                    title=title,
+                    message=f"{sender_name} {action} \"{step_text}\" in \"{doc.get('name', 'Milestone')}\".",
                     type=NotificationType.MILESTONE_STEP,
                     scheduled_for=datetime.now(timezone.utc),
-                    timezone="UTC"
+                    timezone="UTC",
+                    metadata={"screen": "Future", "milestone_id": milestone_id, "step_id": step_id, "is_completed": new_status}
                 )
             )
 

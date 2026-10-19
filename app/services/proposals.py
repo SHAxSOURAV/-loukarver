@@ -37,39 +37,29 @@ class ProposalService:
             return user.get("name", "Your partner")
         return "Your partner"
 
-    async def _send_notification(self, recipient_id: str, sender_id: str, message: str, metadata: dict = None):
-        """Create a notification document directly in the notifications collection."""
-        now_utc = datetime.now(timezone.utc)
-        doc = {
-            "title": "Proposal",
-            "message": message,
-            "type": "Proposal",
-            "timezone": "UTC",
-            "scheduled_for": now_utc,
-            "sender_id": sender_id,
-            "recipient_id": recipient_id,
-            "status": "Delivered",
-            "created_at": now_utc,
-            "delivered_at": now_utc,
-            "is_hidden": False,
-            "metadata": metadata or {},
-        }
-        await self.notifications_collection.insert_one(doc)
-
-        # Try to send via WebSocket
+    async def _send_notification(self, recipient_id: str, sender_id: str, message: str, title: str = "Relationship Proposal", metadata: dict = None):
+        """Dispatch notification to partner via in-app DB, WebSocket, and OneSignal Push."""
         try:
-            from app.core.websocket import ws_manager
-            ws_payload = {
-                "type": "NEW_NOTIFICATION",
-                "notification": {
-                    "type": "Proposal",
-                    "title": "Proposal",
-                    "message": message
-                }
-            }
-            await ws_manager.broadcast_to_user(recipient_id, ws_payload)
-        except Exception:
-            pass
+            from app.services.notification import notification_service
+            from app.schemas.notification import NotificationCreate, NotificationType
+            meta = metadata or {}
+            if "screen" not in meta:
+                meta["screen"] = "Future"
+
+            await notification_service.schedule_notification(
+                sender_id=sender_id,
+                payload=NotificationCreate(
+                    recipient_id=recipient_id,
+                    title=title,
+                    message=message,
+                    type=NotificationType.PROPOSAL,
+                    scheduled_for=datetime.now(timezone.utc),
+                    timezone="UTC",
+                    metadata=meta
+                )
+            )
+        except Exception as e:
+            print(f"Failed to dispatch proposal notification: {e}")
 
     async def create_proposal(self, user_id: str, proposal_data: ProposalCreate) -> Dict[str, Any]:
         partner_id = await self._get_partner_id(user_id)
@@ -112,8 +102,9 @@ class ProposalService:
         await self._send_notification(
             recipient_id=partner_id,
             sender_id=user_id,
+            title="Relationship Proposal 💍",
             message=message,
-            metadata={"proposal_id": doc["id"], "proposal_type": proposal_data.type},
+            metadata={"screen": "Future", "proposal_id": doc["id"], "proposal_type": proposal_data.type},
         )
 
         # Clean up the mongo _id before returning
@@ -172,8 +163,9 @@ class ProposalService:
         await self._send_notification(
             recipient_id=proposer_id,
             sender_id=user_id,
+            title="Proposal Approved! ✨",
             message=f"{approver_name} approved your {type_label} change!",
-            metadata={"proposal_id": proposal_id, "action": "approved"},
+            metadata={"screen": "Future", "proposal_id": proposal_id, "action": "approved"},
         )
 
         return True
@@ -203,8 +195,9 @@ class ProposalService:
         await self._send_notification(
             recipient_id=proposal["proposer_id"],
             sender_id=user_id,
-            message=f"{rejecter_name} rejected your {type_label} change.",
-            metadata={"proposal_id": proposal_id, "action": "rejected"},
+            title="Proposal Declined",
+            message=f"{rejecter_name} declined your {type_label} change.",
+            metadata={"screen": "Future", "proposal_id": proposal_id, "action": "rejected"},
         )
 
         return True

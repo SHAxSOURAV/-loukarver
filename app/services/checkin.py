@@ -86,15 +86,17 @@ class CheckInService:
             partner_id = user["partner"].get("user_id")
             if partner_id:
                 try:
+                    partner_name = user.get('name', 'Your partner')
                     await notification_service.schedule_notification(
                         sender_id=user_id,
                         payload=NotificationCreate(
                             recipient_id=partner_id,
-                            title="Check-in Complete",
-                            message=f"{user.get('name', 'Your partner')} has completed their check-in.",
+                            title=f"✨ {partner_name} Checked In!",
+                            message=f"{partner_name} completed today's check-in. Tap to see their vibe!",
                             type=NotificationType.PARTNER_CHECKIN,
                             scheduled_for=datetime.now(timezone.utc),
-                            timezone=payload.timezone
+                            timezone=payload.timezone,
+                            metadata={"screen": "Home", "date": payload.date, "action": "checkin_created"}
                         )
                     )
                 except Exception as e:
@@ -138,15 +140,17 @@ class CheckInService:
             partner_id = user["partner"].get("user_id")
             if partner_id:
                 try:
+                    partner_name = user.get('name', 'Your partner')
                     await notification_service.schedule_notification(
                         sender_id=user_id,
                         payload=NotificationCreate(
                             recipient_id=partner_id,
-                            title="Check-in Updated",
-                            message=f"{user.get('name', 'Your partner')} has updated their check-in.",
+                            title=f"📝 {partner_name} Updated Check-In",
+                            message=f"{partner_name} updated today's check-in answers.",
                             type=NotificationType.PARTNER_CHECKIN,
                             scheduled_for=datetime.now(timezone.utc),
-                            timezone=payload.timezone
+                            timezone=payload.timezone,
+                            metadata={"screen": "Home", "date": payload.date, "action": "checkin_updated"}
                         )
                     )
                 except Exception as e:
