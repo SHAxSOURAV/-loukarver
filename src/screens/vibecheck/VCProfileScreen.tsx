@@ -389,6 +389,17 @@ export const VCProfileScreen: React.FC = () => {
     try {
       setLoading(true);
       await signoutUser().catch(() => {});
+      try {
+        const Constants = require('expo-constants').default;
+        const ExecutionEnvironment = require('expo-constants').ExecutionEnvironment;
+        const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment?.StoreClient || Constants.appOwnership === 'expo';
+        if (Platform.OS !== 'web' && !isExpoGo) {
+          const { OneSignal } = require('react-native-onesignal');
+          OneSignal.logout();
+        }
+      } catch (err) {
+        console.log('Failed to logout from OneSignal', err);
+      }
       await AsyncStorage.multiRemove(['access_token', 'refresh_token']);
       nav.reset({ index: 0, routes: [{ name: route }] });
     } catch (e) {
