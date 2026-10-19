@@ -84,7 +84,14 @@ const AlignedNav: React.FC = () => {
   useEffect(() => {
     fetchUserData();
     const sub1 = DeviceEventEmitter.addListener('REFRESH_ALIGNED_DATA', debouncedFetchUserData);
-    const sub2 = DeviceEventEmitter.addListener('UNREAD_NOTIFICATIONS_CHANGED', debouncedFetchUserData);
+    const sub2 = DeviceEventEmitter.addListener('UNREAD_NOTIFICATIONS_CHANGED', (explicitCount?: number) => {
+      if (typeof explicitCount === 'number') {
+        setUnreadCount(explicitCount);
+      } else {
+        setUnreadCount(prev => Math.max(0, prev - 1));
+      }
+      debouncedFetchUserData();
+    });
     return () => {
       if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
       sub1.remove();
@@ -105,7 +112,6 @@ const AlignedNav: React.FC = () => {
         {/* Notification Bell with unread badge */}
         <Pressable
           onPress={() => {
-            setUnreadCount(0);
             navigation.navigate('AlignedApp', { screen: 'Home' });
             setTimeout(() => {
               DeviceEventEmitter.emit('OPEN_PRESENCE_HISTORY');

@@ -14,6 +14,7 @@ import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/colors';
 import { AppText } from './AppText';
 import { navigationRef } from '../../navigation/RootNavigator';
+import { markNotificationSeen } from '../../services/notificationApi';
 
 export interface InAppNotificationPayload {
   id?: string;
@@ -120,6 +121,11 @@ export const InAppNotificationBanner: React.FC = () => {
   const handlePress = () => {
     if (!notification) return;
     const { type, metadata } = notification;
+
+    if (notification.id) {
+      markNotificationSeen(notification.id).catch(() => {});
+      DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
+    }
 
     if (navigationRef.isReady()) {
       try {

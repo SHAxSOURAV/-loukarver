@@ -137,16 +137,10 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
     };
   }, [debouncedFetchPresenceData, refreshTrigger]);
 
-  // When presence history sheet opens, mark all unread notifications as seen immediately!
+  // Refresh notifications when presence history sheet opens, without auto-marking them as seen
   useEffect(() => {
     if (isSheetOpen) {
-      markAllNotificationsSeen()
-        .then(() => {
-          setPresenceNotifications(prev => prev.map(n => ({ ...n, status: 'Seen' })));
-          DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
-          DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
-        })
-        .catch(err => console.log('Error auto-marking notifications as seen:', err));
+      fetchPresenceData();
     }
   }, [isSheetOpen]);
 
@@ -568,7 +562,7 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
         title={`${partnerName}'s Activity`}
         kicker="PRESENCE HISTORY"
       >
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingBottom: 10, paddingHorizontal: 20, marginTop: 10 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 10, paddingHorizontal: 20, marginTop: 10 }}>
           <Pressable onPress={() => {
             Alert.alert(
               "Clear All Notifications",
@@ -582,7 +576,7 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
                     try {
                       await clearAllNotifications();
                       setPresenceNotifications([]);
-                      DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
+                      DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED', 0);
                       DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
                     } catch (e) {
                       console.log("Error clearing notifications:", e);
@@ -596,11 +590,29 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
               Clear All
             </AppText>
           </Pressable>
-          <Pressable onPress={() => setShowHidden(!showHidden)}>
-            <AppText color={Colors.accent} size={14}>
-              {showHidden ? "Back to History" : "Archived"}
-            </AppText>
-          </Pressable>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+            {presenceNotifications.some(n => n.status !== "Seen") && (
+              <Pressable onPress={async () => {
+                try {
+                  await markAllNotificationsSeen();
+                  setPresenceNotifications(prev => prev.map(n => ({ ...n, status: 'Seen' })));
+                  DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED', 0);
+                  DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
+                } catch (e) {
+                  console.log("Error marking all seen:", e);
+                }
+              }}>
+                <AppText color={Colors.accent} size={13} style={{ fontWeight: '600' }}>
+                  Mark all read
+                </AppText>
+              </Pressable>
+            )}
+            <Pressable onPress={() => setShowHidden(!showHidden)}>
+              <AppText color={Colors.accent} size={14}>
+                {showHidden ? "Back to History" : "Archived"}
+              </AppText>
+            </Pressable>
+          </View>
         </View>
         <ScrollView style={{ maxHeight: 400 }}>
           {presenceNotifications.length === 0 ? (
@@ -644,6 +656,7 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
                       onSwipeableLeftOpen={async () => {
                         await deleteNotification(n.id);
                         setPresenceNotifications(prev => prev.filter(x => x.id !== n.id));
+                        DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
                         DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
                         setTimeout(() => {
                           if (rowRefs.current[n.id]) {
@@ -675,7 +688,7 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
                         ]}
                         onPress={async () => {
                           if (isUnread) {
-                            await markNotificationSeen(n.id);
+                            // Optimistically mark this single notification as seen immediately
                             setPresenceNotifications(prev => {
                               const newList = [...prev];
                               const index = newList.findIndex(x => x.id === n.id);
@@ -684,6 +697,11 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
                             });
                             DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
                             DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
+                            try {
+                              await markNotificationSeen(n.id);
+                            } catch (err) {
+                              console.log('Error marking notification as seen:', err);
+                            }
                           }
                           if (n.type === 'Partner Check-in') {
                             setIsSheetOpen(false);
@@ -695,6 +713,15 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
                             setIsSheetOpen(false);
                             const category = (n.metadata?.category || '').toLowerCase();
                             nav.navigate('Thread', { activeCategory: category });
+                          } else if (n.type?.includes('Date') || n.type === 'Proposal') {
+                            setIsSheetOpen(false);
+                            nav.navigate('Dates');
+                          } else if (n.type?.includes('Map')) {
+                            setIsSheetOpen(false);
+                            nav.navigate('Map');
+                          } else if (n.type?.includes('Milestone') || n.type?.includes('Us Section')) {
+                            setIsSheetOpen(false);
+                            nav.navigate('Us');
                           }
                         }}
                       >
