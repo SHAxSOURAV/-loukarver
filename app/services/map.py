@@ -275,9 +275,26 @@ class MapService:
         except Exception:
             return False
 
+        partner_id = await self._get_partner_id(user_id)
+        allowed_ids = [str(user_id)]
+        try:
+            allowed_ids.append(ObjectId(user_id))
+        except Exception:
+            pass
+        if partner_id:
+            allowed_ids.append(str(partner_id))
+            try:
+                allowed_ids.append(ObjectId(partner_id))
+            except Exception:
+                pass
+
         doc = await self.places_collection.find_one({
             "_id": oid,
-            "$or": [{"creator_id": user_id}, {"partner_id": user_id}]
+            "$or": [
+                {"creator_id": {"$in": allowed_ids}},
+                {"partner_id": {"$in": allowed_ids}},
+                {"user_id": {"$in": allowed_ids}}
+            ]
         })
         if not doc:
             return False
@@ -285,7 +302,6 @@ class MapService:
         result = await self.places_collection.delete_one({"_id": oid})
         
         if result.deleted_count > 0:
-            partner_id = await self._get_partner_id(user_id)
             if partner_id:
                 from app.core.websocket import ws_manager
                 await ws_manager.broadcast_to_user(partner_id, {"type": "MAP_UPDATED"})

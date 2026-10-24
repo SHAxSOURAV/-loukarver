@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 from typing import Optional
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Response, Query
+from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Response, Query
 from fastapi.responses import FileResponse
 from app.schemas.relationships import (
     RelationshipCreate,
@@ -408,7 +408,15 @@ async def break_alignment(payload: BreakAlignmentRequest, current_user: dict = D
 
 @router.post("/photo", status_code=status.HTTP_200_OK)
 @router.post("/photos", status_code=status.HTTP_200_OK)
-async def upload_photo(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+async def upload_photo(
+    file: UploadFile = File(...),
+    crop_x: Optional[float] = Form(None),
+    crop_y: Optional[float] = Form(None),
+    crop_width: Optional[float] = Form(None),
+    crop_height: Optional[float] = Form(None),
+    rotate: Optional[int] = Form(0),
+    current_user: dict = Depends(get_current_user)
+):
     """Uploads a profile photo for the authenticated user."""
     try:
         contents = await file.read()
@@ -419,9 +427,24 @@ async def upload_photo(file: UploadFile = File(...), current_user: dict = Depend
             nparr = np.frombuffer(contents, np.uint8)
             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             if img is not None:
-                # Resize to 256x256 using INTER_AREA for downsampling
-                resized = cv2.resize(img, (256, 256), interpolation=cv2.INTER_AREA)
-                is_success, buffer = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+                if rotate == 90:
+                    img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+                elif rotate == 180:
+                    img = cv2.rotate(img, cv2.ROTATE_180)
+                elif rotate == 270:
+                    img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+                img_h, img_w = img.shape[:2]
+                if crop_width is not None and crop_height is not None and crop_width > 0 and crop_height > 0:
+                    x = max(0, min(int(crop_x or 0), img_w - 1))
+                    y = max(0, min(int(crop_y or 0), img_h - 1))
+                    w = max(1, min(int(crop_width), img_w - x))
+                    h = max(1, min(int(crop_height), img_h - y))
+                    img = img[y : y + h, x : x + w]
+
+                # Resize to 512x512 high quality square avatar
+                resized = cv2.resize(img, (512, 512), interpolation=cv2.INTER_AREA)
+                is_success, buffer = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
                 if is_success:
                     file_bytes = buffer.tobytes()
                     content_type = "image/jpeg"

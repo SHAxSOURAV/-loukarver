@@ -220,7 +220,26 @@ class UsService:
 
     async def delete_milestone(self, user_id: str, milestone_id: str):
         partner_id = await self._get_partner_id(user_id)
-        query = {"_id": ObjectId(milestone_id), "user_id": {"$in": [user_id, partner_id]}} if partner_id else {"_id": ObjectId(milestone_id), "user_id": user_id}
+        user_ids = [str(user_id)]
+        try:
+            user_ids.append(ObjectId(user_id))
+        except Exception:
+            pass
+        if partner_id:
+            user_ids.append(str(partner_id))
+            try:
+                user_ids.append(ObjectId(partner_id))
+            except Exception:
+                pass
+        
+        query = {
+            "_id": ObjectId(milestone_id),
+            "$or": [
+                {"user_id": {"$in": user_ids}},
+                {"creator_id": {"$in": user_ids}},
+                {"partner_id": {"$in": user_ids}}
+            ]
+        }
         
         result = await self.milestones_collection.delete_one(query)
         if result.deleted_count == 0:

@@ -162,7 +162,27 @@ class MilestoneService:
         return await self._map_milestone(result, pin or payload.pin, user_timezone=payload.timezone)
 
     async def delete_milestone(self, milestone_id: str, user_id: str, pin: Optional[str] = None) -> bool:
-        doc = await self.milestones_collection.find_one({"_id": ObjectId(milestone_id), "$or": [{"creator_id": user_id}, {"partner_id": user_id}]})
+        partner_id = await self._get_partner_id(user_id)
+        allowed_ids = [str(user_id)]
+        try:
+            allowed_ids.append(ObjectId(user_id))
+        except Exception:
+            pass
+        if partner_id:
+            allowed_ids.append(str(partner_id))
+            try:
+                allowed_ids.append(ObjectId(partner_id))
+            except Exception:
+                pass
+
+        doc = await self.milestones_collection.find_one({
+            "_id": ObjectId(milestone_id),
+            "$or": [
+                {"creator_id": {"$in": allowed_ids}},
+                {"partner_id": {"$in": allowed_ids}},
+                {"user_id": {"$in": allowed_ids}}
+            ]
+        })
         if not doc:
             return False
 
@@ -172,7 +192,6 @@ class MilestoneService:
         result = await self.milestones_collection.delete_one({"_id": ObjectId(milestone_id)})
         
         if result.deleted_count > 0:
-            partner_id = await self._get_partner_id(user_id)
             if partner_id:
                 from app.core.websocket import ws_manager
                 await ws_manager.broadcast_to_user(partner_id, {"type": "MILESTONE_UPDATED"})

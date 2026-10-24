@@ -221,11 +221,51 @@ async def update_vibecheck_profile(payload: VibeCheckProfileUpdate, current_user
 @router.post("/profile/picture", response_model=VibeCheckProfileResponse)
 async def upload_vibecheck_profile_picture(
     file: UploadFile = File(...),
+    crop_x: Optional[float] = Form(None),
+    crop_y: Optional[float] = Form(None),
+    crop_width: Optional[float] = Form(None),
+    crop_height: Optional[float] = Form(None),
+    rotate: Optional[int] = Form(0),
     current_user: dict = Depends(require_not_aligned)
 ):
     """Upload or update profile picture for VibeCheck."""
     try:
-        file_url = await s3_service.upload_file(file, folder="vibecheck")
+        contents = await file.read()
+        file_bytes = contents
+        content_type = file.content_type or "image/jpeg"
+
+        try:
+            import cv2
+            import numpy as np
+            nparr = np.frombuffer(contents, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if img is not None:
+                if rotate == 90:
+                    img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+                elif rotate == 180:
+                    img = cv2.rotate(img, cv2.ROTATE_180)
+                elif rotate == 270:
+                    img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+                img_h, img_w = img.shape[:2]
+                if crop_width is not None and crop_height is not None and crop_width > 0 and crop_height > 0:
+                    x = max(0, min(int(crop_x or 0), img_w - 1))
+                    y = max(0, min(int(crop_y or 0), img_h - 1))
+                    w = max(1, min(int(crop_width), img_w - x))
+                    h = max(1, min(int(crop_height), img_h - y))
+                    img = img[y : y + h, x : x + w]
+
+                # Resize to 512x512 high quality square avatar
+                resized = cv2.resize(img, (512, 512), interpolation=cv2.INTER_AREA)
+                is_success, buffer = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+                if is_success:
+                    file_bytes = buffer.tobytes()
+                    content_type = "image/jpeg"
+        except Exception as img_err:
+            print(f"[VibeCheck Photo Warning] Image optimization skipped due to format: {img_err}")
+
+        filename = f"{uuid.uuid4().hex}.jpg" if content_type == "image/jpeg" else (file.filename or f"{uuid.uuid4().hex}.bin")
+        file_url = await s3_service.upload_bytes(file_bytes, filename=filename, content_type=content_type, folder="vibecheck")
         return await vibe_check_service.update_profile_picture(current_user["id"], file_url)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))

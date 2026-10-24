@@ -141,10 +141,11 @@ async def check_upcoming_dates():
                     payload=NotificationCreate(
                         recipient_id=uid,
                         type=NotificationType.SYSTEM,
-                        title="Upcoming Date!",
-                        message=f"Your date '{d.get('where', 'Date')}' is starting in 1 hour!",
+                        title="🍷 Upcoming Date in 1 Hour!",
+                        message=f"Your date at \"{d.get('where', 'Date')}\" starts in 1 hour! Tap to view details.",
                         scheduled_for=datetime.now(timezone.utc),
-                        timezone="UTC"
+                        timezone="UTC",
+                        metadata={"screen": "Dates", "date_id": str(d["_id"]), "action": "upcoming_reminder"}
                     )
                 )
     except Exception as e:

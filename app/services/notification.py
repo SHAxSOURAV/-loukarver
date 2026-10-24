@@ -91,6 +91,9 @@ class NotificationService:
             "ios_badgeType": "Increase",
             "ios_badgeCount": 1,
             "ios_sound": "default",
+            "android_sound": "default",
+            "android_visibility": 1,
+            "android_accent_color": "FF4F8B",
         }
         if custom_data:
             payload["data"] = custom_data
