@@ -194,7 +194,65 @@ class MilestoneService:
         if result.deleted_count > 0:
             if partner_id:
                 from app.core.websocket import ws_manager
-                await ws_manager.broadcast_to_user(partner_id, {"type": "MILESTONE_UPDATED"})
+                from app.services.notification import notification_service
+                from app.schemas.notification import NotificationCreate, NotificationType
+
+                milestone_name = doc.get("name") or doc.get("title") or "Milestone"
+                creator_id = str(doc.get("creator_id") or doc.get("user_id") or "")
+                is_partner_created = bool(creator_id and creator_id == str(partner_id))
+                is_shared = not doc.get("is_private") or is_partner_created
+
+                # Realtime WebSocket broadcasts so partner's UI refreshes immediately
+                await ws_manager.broadcast_to_user(partner_id, {
+                    "type": "MILESTONE_UPDATED",
+                    "action": "deleted",
+                    "milestone_id": str(milestone_id),
+                    "milestone_name": milestone_name,
+                    "deleted_by": user_id,
+                    "is_partner_created": is_partner_created,
+                })
+                await ws_manager.broadcast_to_user(partner_id, {
+                    "type": "DATE_UPDATED",
+                    "action": "deleted",
+                    "milestone_id": str(milestone_id),
+                })
+
+                # If partner created it or it was a shared milestone, send push notification and alert
+                if is_shared:
+                    try:
+                        names = await self._get_names(user_id, partner_id)
+                        deleter_name = names.get(user_id, "Your partner")
+
+                        if is_partner_created:
+                            title = "⚠️ Milestone Removed by Partner"
+                            message = f'{deleter_name} removed your milestone: "{milestone_name}"'
+                        else:
+                            title = "⚠️ Shared Milestone Removed"
+                            message = f'{deleter_name} removed the milestone: "{milestone_name}"'
+
+                        await notification_service.schedule_notification(
+                            sender_id=user_id,
+                            payload=NotificationCreate(
+                                recipient_id=partner_id,
+                                title=title,
+                                message=message,
+                                type=NotificationType.MILESTONE,
+                                scheduled_for=datetime.now(timezone.utc),
+                                timezone="UTC",
+                                metadata={
+                                    "screen": "Future",
+                                    "milestone_id": str(milestone_id),
+                                    "milestone_name": milestone_name,
+                                    "action": "deleted",
+                                    "is_partner_created": is_partner_created,
+                                    "deleted_by": user_id,
+                                    "deleted_by_name": deleter_name,
+                                }
+                            )
+                        )
+                    except Exception as e:
+                        print(f"Failed to notify partner on delete_milestone: {e}")
+
             return True
         return False
 

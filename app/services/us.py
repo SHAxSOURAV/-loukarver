@@ -198,6 +198,12 @@ class UsService:
         result = await self.milestones_collection.insert_one(new_doc)
         new_doc["id"] = str(result.inserted_id)
         new_doc["_id"] = str(result.inserted_id)
+
+        if partner_id:
+            from app.core.websocket import ws_manager
+            await ws_manager.broadcast_to_user(partner_id, {"type": "DATE_UPDATED"})
+            await ws_manager.broadcast_to_user(partner_id, {"type": "MILESTONE_UPDATED"})
+
         return new_doc
 
     async def update_milestone(self, user_id: str, milestone_id: str, payload: MilestoneUpdate) -> Dict[str, Any]:
@@ -216,6 +222,12 @@ class UsService:
         if updated and "_id" in updated:
             updated["id"] = str(updated["_id"])
             updated["_id"] = str(updated["_id"])
+
+        if partner_id:
+            from app.core.websocket import ws_manager
+            await ws_manager.broadcast_to_user(partner_id, {"type": "DATE_UPDATED"})
+            await ws_manager.broadcast_to_user(partner_id, {"type": "MILESTONE_UPDATED"})
+
         return updated
 
     async def delete_milestone(self, user_id: str, milestone_id: str):
@@ -241,9 +253,70 @@ class UsService:
             ]
         }
         
-        result = await self.milestones_collection.delete_one(query)
+        doc = await self.milestones_collection.find_one(query)
+        if not doc:
+            raise ValueError("Milestone not found or permission denied")
+
+        result = await self.milestones_collection.delete_one({"_id": ObjectId(milestone_id)})
         if result.deleted_count == 0:
             raise ValueError("Milestone not found or permission denied")
+
+        if partner_id:
+            from app.core.websocket import ws_manager
+            from app.services.notification import notification_service
+            from app.schemas.notification import NotificationCreate, NotificationType
+
+            milestone_title = doc.get("title") or doc.get("name") or "Marked Date"
+            creator_id = str(doc.get("user_id") or doc.get("creator_id") or "")
+            is_partner_created = bool(creator_id and creator_id == str(partner_id))
+
+            # Broadcast WebSocket updates for instant UI refresh
+            await ws_manager.broadcast_to_user(partner_id, {
+                "type": "DATE_UPDATED",
+                "action": "deleted",
+                "milestone_id": str(milestone_id),
+                "is_partner_created": is_partner_created,
+            })
+            await ws_manager.broadcast_to_user(partner_id, {
+                "type": "MILESTONE_UPDATED",
+                "action": "deleted",
+                "milestone_id": str(milestone_id),
+                "is_partner_created": is_partner_created,
+            })
+
+            try:
+                user_doc = await self.users_collection.find_one({"_id": ObjectId(user_id)}, {"name": 1})
+                deleter_name = user_doc.get("name", "Your partner") if user_doc else "Your partner"
+
+                if is_partner_created:
+                    title = "⚠️ Milestone Removed by Partner"
+                    message = f'{deleter_name} removed your marked date: "{milestone_title}"'
+                else:
+                    title = "⚠️ Shared Marked Date Removed"
+                    message = f'{deleter_name} removed the marked date: "{milestone_title}"'
+
+                await notification_service.schedule_notification(
+                    sender_id=user_id,
+                    payload=NotificationCreate(
+                        recipient_id=partner_id,
+                        title=title,
+                        message=message,
+                        type=NotificationType.MILESTONE,
+                        scheduled_for=datetime.now(timezone.utc),
+                        timezone="UTC",
+                        metadata={
+                            "screen": "Dates",
+                            "milestone_id": str(milestone_id),
+                            "milestone_name": milestone_title,
+                            "action": "deleted",
+                            "is_partner_created": is_partner_created,
+                            "deleted_by": user_id,
+                            "deleted_by_name": deleter_name,
+                        }
+                    )
+                )
+            except Exception as e:
+                print(f"Failed to notify partner on us delete_milestone: {e}")
 
     # Next Meet CRUD
     async def set_next_meet(self, user_id: str, payload: NextMeetCreate) -> Dict[str, Any]:
