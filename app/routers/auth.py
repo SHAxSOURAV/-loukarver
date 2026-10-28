@@ -37,6 +37,16 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found"
         )
+    if user.get("is_deleted"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Your account has been deleted"
+        )
+    if user.get("is_blocked"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been blocked by an administrator."
+        )
     user["id"] = str(user["_id"])
     return user
 
@@ -193,6 +203,8 @@ async def refresh(payload: RefreshRequest):
             "access_token": new_access,
             "token_type": "bearer"
         }
+    except PermissionError as pe:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(pe))
     except ValueError as ve:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:

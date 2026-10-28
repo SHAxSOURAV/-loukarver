@@ -486,9 +486,19 @@ class AuthService:
         email = token_payload.get("email")
         
         from bson import ObjectId
-        user = await self.collection.find_one({"_id": ObjectId(user_id)})
+        from bson.errors import InvalidId
+        try:
+            user_oid = ObjectId(user_id)
+        except (InvalidId, TypeError):
+            raise ValueError("Invalid user identifier in refresh token")
+
+        user = await self.collection.find_one({"_id": user_oid})
         if not user:
             raise ValueError("User not found")
+        if user.get("is_deleted"):
+            raise ValueError("Your account has been deleted")
+        if user.get("is_blocked"):
+            raise PermissionError("Your account has been blocked by an administrator.")
             
         return create_access_token({"user_id": user_id, "email": email})
 

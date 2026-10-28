@@ -1,4 +1,6 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Query, status
+from app.services.auth import decode_token
+from bson import ObjectId
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
@@ -284,11 +286,32 @@ async def root():
     return {"message": "Aligned Backend is Running.."}
 
 @app.websocket("/ws/notifications/{user_id}")
-async def websocket_notifications(websocket: WebSocket, user_id: str):
+async def websocket_notifications(
+    websocket: WebSocket,
+    user_id: str,
+    token: str = Query(None)
+):
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    payload = decode_token(token, secret=settings.SECRET_KEY)
+    if not payload or payload.get("type") != "access" or payload.get("user_id") != user_id:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    try:
+        user = await relationship_service.collection.find_one({"_id": ObjectId(user_id)})
+        if not user or user.get("is_blocked") or user.get("is_deleted"):
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+    except Exception:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     await ws_manager.connect(user_id, websocket)
     try:
         while True:
-            # We don't expect the client to send much, but we must receive to keep the connection alive
             await websocket.receive_text()
     except Exception:
         ws_manager.disconnect(user_id, websocket)

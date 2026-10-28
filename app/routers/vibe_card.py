@@ -8,6 +8,8 @@ from app.schemas.vibe_card import (
     VibeStreakResponse, GenericResponse, VibeHistoryPaginatedResponse
 )
 from app.services.vibe_card import vibe_card_service
+from app.services.auth import decode_token
+from app.core.config import settings
 
 router = APIRouter(prefix="/vibecheck/cards", tags=["VibeCheck Cards"])
 
@@ -39,7 +41,20 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 @router.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: str):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    user_id: str,
+    token: Optional[str] = Query(None)
+):
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    payload = decode_token(token, secret=settings.SECRET_KEY)
+    if not payload or payload.get("type") != "access" or payload.get("user_id") != user_id:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     await manager.connect(websocket, user_id)
     try:
         while True:
