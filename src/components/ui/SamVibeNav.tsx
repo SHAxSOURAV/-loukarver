@@ -239,12 +239,14 @@ const SamVibeNav: React.FC<SamVibeNavProps> = ({ onPartnerChange }) => {
     let reconnectDelay = 3000; // Fix #5: exponential backoff
     const MAX_DELAY = 30000;
     
-    const connectWs = () => {
+    const connectWs = async () => {
       if (!isMounted) return;
+      const token = await AsyncStorage.getItem('access_token');
       
-      const wsUrl = process.env.EXPO_PUBLIC_BACKEND_URL
-        ? process.env.EXPO_PUBLIC_BACKEND_URL.replace("http", "ws") + `/ws/notifications/${profile.user_id}`
-        : `ws://localhost:8000/ws/notifications/${profile.user_id}`;
+      const baseWs = process.env.EXPO_PUBLIC_BACKEND_URL
+        ? process.env.EXPO_PUBLIC_BACKEND_URL.replace("http", "ws")
+        : "ws://localhost:8000";
+      const wsUrl = `${baseWs}/ws/notifications/${profile.user_id}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
         
       ws = new WebSocket(wsUrl);
 

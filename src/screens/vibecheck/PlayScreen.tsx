@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
   ScrollView,
@@ -298,7 +299,8 @@ export const PlayScreen: React.FC = () => {
       
       // Connect to WebSocket
       const baseUrl = api.defaults.baseURL || "http://localhost:8006";
-      const wsUrl = `${baseUrl.replace('http', 'ws')}/vibecheck/cards/ws/${myUserId}`;
+      const token = await AsyncStorage.getItem('access_token');
+      const wsUrl = `${baseUrl.replace('http', 'ws')}/vibecheck/cards/ws/${myUserId}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
       
       try {
           ws = new WebSocket(wsUrl);

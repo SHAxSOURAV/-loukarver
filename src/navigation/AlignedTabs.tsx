@@ -8,6 +8,7 @@ import { Colors } from '../constants/colors';
 import { Fonts } from '../constants/fonts';
 import api from '../services/api';
 import { getMe } from '../services/authApi';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { HomeScreen } from '../screens/aligned/HomeScreen';
 import { DatesScreen } from '../screens/aligned/DatesScreen';
@@ -53,8 +54,9 @@ function useGlobalWebSocket() {
           return;
         }
 
+        const token = await AsyncStorage.getItem('access_token');
         let wsUrl = baseUrl.replace("http://", "ws://").replace("https://", "wss://");
-        wsUrl = `${wsUrl}/ws/notifications/${userId}`;
+        wsUrl = `${wsUrl}/ws/notifications/${userId}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
 
         if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
           return;

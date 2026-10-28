@@ -113,13 +113,29 @@ api.interceptors.response.use(
       return api(originalRequest);
     } catch (refreshErr) {
       processQueue(refreshErr, null);
-      // On ANY refresh failure (invalid token, missing token, 400/401, or server rejection),
-      // cleanly wipe credentials and notify RootNavigator to navigate to Login immediately.
-      try {
-        delete api.defaults.headers.common['Authorization'];
-        await AsyncStorage.multiRemove(['access_token', 'refresh_token']);
-        DeviceEventEmitter.emit('AUTH_LOGOUT');
-      } catch (_) {}
+
+      // Determine if the failure is due to invalid credentials (400/401/403/missing token)
+      // vs temporary network issues (no response, timeout, 5xx server errors).
+      const status = refreshErr.response?.status;
+      const isCredentialError =
+        refreshErr.message === 'No refresh token stored' ||
+        refreshErr.message === 'No access token returned from refresh' ||
+        status === 400 ||
+        status === 401 ||
+        status === 403;
+
+      if (isCredentialError) {
+        // Only wipe credentials and force logout if the refresh token is truly invalid/expired/revoked
+        try {
+          delete api.defaults.headers.common['Authorization'];
+          await AsyncStorage.multiRemove(['access_token', 'refresh_token']);
+          DeviceEventEmitter.emit('AUTH_LOGOUT');
+        } catch (_) {}
+      } else {
+        // Network drop, timeout, or temporary server downtime:
+        // Do NOT wipe tokens or force logout. Preserve session in AsyncStorage so it can recover.
+        console.log('[API] Refresh token request failed due to network/server issue, preserving session:', refreshErr.message);
+      }
       return Promise.reject(refreshErr);
     } finally {
       isRefreshing = false;
@@ -127,4 +143,4 @@ api.interceptors.response.use(
   }
 );
 
-export default api;
+export default api;

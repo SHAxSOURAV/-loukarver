@@ -103,6 +103,15 @@ export default function RootNavigator() {
         const { clearMeCache } = require('../services/authApi');
         clearMeCache();
       } catch (_) {}
+      try {
+        const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient || Constants.appOwnership === 'expo';
+        if (Platform.OS !== 'web' && !isExpoGo) {
+          const { OneSignal } = require('react-native-onesignal');
+          OneSignal.logout();
+        }
+      } catch (err) {
+        console.log('[RootNavigator] OneSignal logout on AUTH_LOGOUT error:', err);
+      }
       if (navigationRef.isReady()) {
         navigationRef.reset({
           index: 0,
