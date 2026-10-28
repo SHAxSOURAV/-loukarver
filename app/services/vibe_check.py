@@ -647,7 +647,11 @@ class VibeCheckService:
         }
         await self.invites.insert_one(invite_doc)
         
-        invite_link = f"{settings.FRONTEND_URL}/invite/{invite_code}"
+        base_url = settings.FRONTEND_URL
+        if not base_url or "127.0.0.1" in base_url or "localhost" in base_url:
+            base_url = "https://13-61-230-140.sslip.io"
+        base_url = base_url.rstrip("/")
+        invite_link = f"{base_url}/invite/{invite_code}"
         
         return VibeInviteResponse(invite_code=invite_code, invite_link=invite_link)
 

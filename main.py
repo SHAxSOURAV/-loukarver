@@ -2,7 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.encoders import jsonable_encoder
 import os
 from app.routers import (
@@ -145,6 +145,139 @@ app.include_router(reports.router)
 # Mount StaticFiles for uploaded files
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+
+@app.get("/invite/{invite_code}", response_class=HTMLResponse)
+async def invite_landing(invite_code: str):
+    clean_code = invite_code.strip().upper()
+    inviter_name = "Your friend"
+    try:
+        val = await vibe_check_service.validate_invite(clean_code)
+        if val and val.inviter_name:
+            inviter_name = val.inviter_name
+    except Exception:
+        pass
+    
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Join {inviter_name} on Samesy</title>
+  <style>
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #F4EEE4;
+      color: #1A1614;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+      box-sizing: border-box;
+    }}
+    .card {{
+      background: #FFFFFF;
+      max-width: 440px;
+      width: 100%;
+      border-radius: 20px;
+      padding: 36px 28px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.06);
+      text-align: center;
+      border: 1px solid #E5DEC9;
+    }}
+    .logo {{
+      font-size: 28px;
+      font-weight: 700;
+      color: #B8553E;
+      margin-bottom: 8px;
+      letter-spacing: -0.5px;
+    }}
+    .subtitle {{
+      font-size: 15px;
+      color: #8C7F75;
+      margin-bottom: 24px;
+      font-style: italic;
+    }}
+    .code-box {{
+      background: #F4EEE4;
+      border: 2px dashed #B8553E;
+      border-radius: 12px;
+      padding: 16px;
+      font-size: 26px;
+      font-family: monospace;
+      font-weight: 700;
+      letter-spacing: 4px;
+      color: #1A1614;
+      margin-bottom: 24px;
+      word-break: break-all;
+    }}
+    .btn {{
+      display: block;
+      width: 100%;
+      padding: 16px;
+      background: #1C1C1E;
+      color: #FFFFFF;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 16px;
+      border-radius: 12px;
+      box-sizing: border-box;
+      margin-bottom: 12px;
+      transition: background 0.2s;
+      border: none;
+      cursor: pointer;
+    }}
+    .btn:hover {{
+      background: #333336;
+    }}
+    .btn-secondary {{
+      background: transparent;
+      color: #B8553E;
+      border: 1px solid #B8553E;
+    }}
+    .footer-note {{
+      font-size: 13px;
+      color: #8C7F75;
+      margin-top: 20px;
+      line-height: 1.5;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">Samesy.</div>
+    <div class="subtitle">{inviter_name} invited you to a Vibe Check!</div>
+    <div class="code-box" id="invite-code">{clean_code}</div>
+    <a href="samesy://invite/{clean_code}" class="btn">Open in Samesy App</a>
+    <button onclick="copyCode()" id="copy-btn" class="btn btn-secondary">Copy Invite Code</button>
+    <div class="footer-note">
+      If the app doesn't open automatically, launch <strong>Samesy</strong> and paste this invite code during setup.
+    </div>
+  </div>
+  <script>
+    try {{
+      window.location.href = "samesy://invite/{clean_code}";
+    }} catch (e) {{}}
+    function copyCode() {{
+      const code = "{clean_code}";
+      navigator.clipboard.writeText(code).then(() => {{
+        const btn = document.getElementById('copy-btn');
+        btn.innerText = "Copied to Clipboard!";
+        btn.style.background = "#E5DEC9";
+        setTimeout(() => {{
+          btn.innerText = "Copy Invite Code";
+          btn.style.background = "transparent";
+        }}, 2500);
+      }}).catch(() => {{
+        alert("Invite code: " + code);
+      }});
+    }}
+  </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
 
 @app.get("/")
 async def root():

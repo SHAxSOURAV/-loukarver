@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -33,6 +34,7 @@ class Settings(BaseSettings):
     # OneSignal Integration
     ONESIGNAL_APP_ID: str = ""
     ONESIGNAL_REST_API_KEY: str = ""
+    ONESIGNAL_ANDROID_CHANNEL_ID: Optional[str] = None
     
     FRONTEND_URL: str = ""
     

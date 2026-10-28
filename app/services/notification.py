@@ -62,11 +62,14 @@ class NotificationService:
         
         # Send OneSignal Push Notification
         import asyncio
+        custom_data = dict(new_doc.get("metadata") or {})
+        custom_data["id"] = new_doc["id"]
+        custom_data["type"] = str(new_doc["type"])
         asyncio.create_task(self.send_onesignal_push(
-            payload.recipient_id,
+            str(payload.recipient_id),
             new_doc.get("title", ""),
             new_doc.get("message", ""),
-            custom_data=new_doc.get("metadata")
+            custom_data=custom_data
         ))
         
         return await self._map_notification(new_doc, payload.timezone)
@@ -83,7 +86,7 @@ class NotificationService:
         }
         payload = {
             "app_id": settings.ONESIGNAL_APP_ID,
-            "include_aliases": {"external_id": [user_id]},
+            "include_aliases": {"external_id": [str(user_id)]},
             "target_channel": "push",
             "headings": {"en": title},
             "contents": {"en": message},
@@ -96,6 +99,8 @@ class NotificationService:
             "android_visibility": 1,
             "android_accent_color": "FF4F8B",
         }
+        if getattr(settings, "ONESIGNAL_ANDROID_CHANNEL_ID", None):
+            payload["android_channel_id"] = settings.ONESIGNAL_ANDROID_CHANNEL_ID
         if custom_data:
             payload["data"] = custom_data
         
@@ -103,7 +108,13 @@ class NotificationService:
             async with httpx.AsyncClient() as client:
                 res = await client.post(url, json=payload, headers=headers, timeout=5.0)
                 if res.status_code >= 400:
-                    print(f"OneSignal Error: {res.text}")
+                    print(f"OneSignal Error ({res.status_code}): {res.text}")
+                else:
+                    data = res.json()
+                    errors = data.get("errors")
+                    recipients = data.get("recipients", 0)
+                    if errors or recipients == 0:
+                        print(f"OneSignal Warning: recipients={recipients}, errors={errors} for user {user_id}")
         except Exception as e:
             print(f"Failed to send OneSignal push: {str(e)}")
 
@@ -144,7 +155,7 @@ class NotificationService:
         skip = (page - 1) * size
         cursor = self.notifications_collection.find(query).sort("scheduled_for", -1).skip(skip).limit(size)
         
-        unread_query = {"recipient_id": rf, "status": {"$ne": NotificationStatus.SEEN}}
+        unread_query = {"recipient_id": rf, "status": {"$nin": [NotificationStatus.SEEN, "seen", "SEEN"]}}
         if types:
             unread_query["type"] = {"$in": types}
         if is_hidden is not None:
@@ -179,7 +190,7 @@ class NotificationService:
         now_utc = datetime.now(timezone.utc)
         rf = self._recipient_filter(user_id)
         result = await self.notifications_collection.update_many(
-            {"recipient_id": rf, "status": {"$ne": NotificationStatus.SEEN}},
+            {"recipient_id": rf, "status": {"$nin": [NotificationStatus.SEEN, "seen", "SEEN"]}},
             {"$set": {"status": NotificationStatus.SEEN, "seen_at": now_utc}}
         )
         if result.modified_count > 0:

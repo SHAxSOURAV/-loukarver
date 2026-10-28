@@ -149,28 +149,14 @@ class VibePulseService:
 
         now = datetime.now(timezone.utc)
 
-        # 2. Sequential step enforcement
+        # 2. Ladder step validation (free selection of any stage)
+        try:
+            target_idx = self.LADDER_ORDER.index(payload.status.value)
+        except ValueError:
+            raise ValueError(f"Invalid ladder step: {payload.status.value}")
+
         my_pulse = await self.pulses.find_one({"user_id": user_id, "partner_id": payload.partner_id})
         current_status = my_pulse["status"] if my_pulse else PulseStatus.NONE
-
-        if current_status == PulseStatus.NONE:
-            # First time — must start at Talking
-            if payload.status != PulseStatus.TALKING:
-                raise ValueError("You must start at Talking before moving up the ladder.")
-        else:
-            # Enforce +1 or -1 step movement
-            try:
-                current_idx = self.LADDER_ORDER.index(current_status)
-            except ValueError:
-                current_idx = 0  # fallback
-            try:
-                target_idx = self.LADDER_ORDER.index(payload.status.value)
-            except ValueError:
-                raise ValueError(f"Invalid ladder step: {payload.status.value}")
-
-            diff = target_idx - current_idx
-            if diff not in (1, -1):
-                raise ValueError("You can only move one step at a time on the ladder.")
 
         # 3. Special Logic for Aligned
         if payload.status == PulseStatus.ALIGNED:
