@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { View, StyleSheet, Pressable, Alert, ActivityIndicator, Image, Platform, PanResponder, FlatList, TextInput } from "react-native";
+import { View, StyleSheet, Pressable, Alert, ActivityIndicator, Image, Platform, PanResponder, FlatList, TextInput, Vibration } from "react-native";
+import * as Haptics from 'expo-haptics';
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { Swipeable } from 'react-native-gesture-handler';
@@ -254,11 +255,45 @@ const SamVibeNav: React.FC<SamVibeNavProps> = ({ onPartnerChange }) => {
         try {
           if (typeof event.data !== 'string' || !event.data.trim()) return;
           const data = JSON.parse(event.data);
-          if (data.type === "NEW_NOTIFICATION" || data.type === "FLAG_CREATED" || data.type === "PULSE_UPDATED") {
-             DeviceEventEmitter.emit("REFRESH_VIBE_DATA");
+          if (data.type === "POKE_RECEIVED") {
+            try {
+              Vibration.vibrate([0, 500, 200, 500]);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            } catch (_) {}
+            const partnerName = data.partner_name || 'Your partner';
+            DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
+              type: 'Thinking of You',
+              title: 'Thinking of You 💕',
+              message: `${partnerName} sent you a ping!`,
+              metadata: {
+                screen: 'Pulse',
+                section: 'moment',
+                action: 'silent_ping',
+              },
+            });
+            DeviceEventEmitter.emit("REFRESH_VIBE_DATA");
+          } else if (data.type === "NEW_NOTIFICATION") {
+            const notif = data.notification || {};
+            const meta = notif.metadata || data.metadata || {};
+            if (meta.action === 'silent_ping' || notif.type === 'Thinking of You') {
+              try {
+                Vibration.vibrate([0, 500, 200, 500]);
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+              } catch (_) {}
+            }
+            DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
+              id: notif.id,
+              type: notif.type || 'Partner Update',
+              title: notif.title || 'Partner Activity',
+              message: notif.message || 'Your partner made a change',
+              metadata: meta,
+            });
+            DeviceEventEmitter.emit("REFRESH_VIBE_DATA");
+          } else if (data.type === "FLAG_CREATED" || data.type === "PULSE_UPDATED") {
+            DeviceEventEmitter.emit("REFRESH_VIBE_DATA");
           }
           if (data.type === "new_thread_message") {
-             DeviceEventEmitter.emit("NEW_THREAD_MESSAGE");
+            DeviceEventEmitter.emit("NEW_THREAD_MESSAGE");
           }
         } catch (e) {}
       };

@@ -12,6 +12,8 @@ import SamVibeNav from '@/components/ui/SamVibeNav';
 import { VibeRefreshControl } from '../../components/ui/VibeRefreshControl';
 import { getVibeProfile } from '../../services/vibeCheckApi';
 import { setVibePulse, getVibePulseStatus, getPulseAnalytics, getMyFlags, createFlag, checkAlignedConnection, updateFlag, deleteFlag, getPartnerFlags, breakAlignment } from '../../services/vibePulseApi';
+import { pokePartner, getInteractions } from '../../services/interactionsApi';
+import * as Haptics from 'expo-haptics';
 
 const LADDER = [
   { l: 'Talking', sub: 'Texting, flirting — no dates yet' },
@@ -58,6 +60,10 @@ export const PulseScreen: React.FC = () => {
   
   const [analytics, setAnalytics] = useState<any>(null);
   const [flags, setFlags] = useState<any[]>([]);
+
+  const [thinkingSent, setThinkingSent] = useState(false);
+  const [interactionStats, setInteractionStats] = useState<any>(null);
+  const [isPoking, setIsPoking] = useState(false);
 
   const [newFlagSheet, setNewFlagSheet] = useState(false);
   const [newFlagText, setNewFlagText] = useState('');
@@ -144,6 +150,11 @@ export const PulseScreen: React.FC = () => {
       const pFlagsRes = await getPartnerFlags(pid);
       if (pFlagsRes.success) setPartnerFlags(pFlagsRes.data);
     } catch (e) {}
+
+    try {
+      const intRes = await getInteractions("UTC", pid);
+      if (intRes?.success) setInteractionStats(intRes.data);
+    } catch (e) {}
   };
 
   useEffect(() => {
@@ -203,25 +214,34 @@ export const PulseScreen: React.FC = () => {
     }
   };
 
+  const handlePoke = async () => {
+    if (!partnerId) {
+      Alert.alert("Connection Required", "Please connect with a partner first to send a silent ping.");
+      return;
+    }
+    if (thinkingSent || isPoking) return;
+    setIsPoking(true);
+    try {
+      await pokePartner(partnerId);
+      try {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      } catch (_) {}
+      setThinkingSent(true);
+      const res = await getInteractions("UTC", partnerId).catch(() => null);
+      if (res?.success) setInteractionStats(res.data);
+      setTimeout(() => setThinkingSent(false), 3000);
+    } catch (e: any) {
+      const msg = e?.response?.data?.detail || "Could not send ping to partner.";
+      Alert.alert("Notice", msg);
+    } finally {
+      setIsPoking(false);
+    }
+  };
+
   const handleLadderPress = async (index: number) => {
     if (!partnerId) {
       Alert.alert('Error', 'No active partner found.');
       return;
-    }
-
-    // Sequential enforcement: only allow +1 or -1 from current step
-    if (myStage !== -1) {
-      const diff = index - myStage;
-      if (diff !== 1 && diff !== -1) {
-        Alert.alert('One step at a time', 'You can only move one step up or down on the ladder.');
-        return;
-      }
-    } else {
-      // No step yet — only Talking (index 0) is allowed
-      if (index !== 0) {
-        Alert.alert('Start at Talking', 'You must begin your ladder journey at Talking.');
-        return;
-      }
     }
 
     // Aligned confirmation gate (last step)
@@ -231,13 +251,13 @@ export const PulseScreen: React.FC = () => {
       return;
     }
 
-    // Break alignment gate (stepping down from Aligned to Serious)
-    if (myStage === LADDER.length - 1 && index === LADDER.length - 2 && isAligned) {
+    // Break alignment gate (stepping down from Aligned to lower stage)
+    if (myStage === LADDER.length - 1 && index < LADDER.length - 1 && isAligned) {
       setBreakAlignSheet(true);
       return;
     }
 
-    // Normal step change
+    // Free stage selection on the ladder
     try {
       await setVibePulse(partnerId, getStageStatus(index));
       loadPulseData(partnerId);
@@ -382,7 +402,7 @@ export const PulseScreen: React.FC = () => {
                 index={i}
                 isLast={i === LADDER.length - 1}
                 isMine={i === myStage}
-                disabled={myStage !== -1 && Math.abs(i - myStage) > 1}
+                disabled={false}
                 showPartnerBadge={isAligned && i === LADDER.length - 1}
                 partnerName={partnerName}
                 onPress={() => handleLadderPress(i)}
@@ -787,6 +807,41 @@ export const PulseScreen: React.FC = () => {
           </AppText>
 
           <View style={{ gap: 12 }}>
+            {/* Thinking of you Ping Card */}
+            <Pressable 
+              style={[styles.door, { backgroundColor: Colors.bone }]} 
+              onPress={handlePoke}
+              disabled={thinkingSent || isPoking}
+            >
+              <View style={styles.doorHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <AppText style={{ fontSize: 16 }}>◉</AppText>
+                  <AppText variant="smallCaps" color={Colors.muted}>IN THIS MOMENT</AppText>
+                </View>
+                {thinkingSent ? (
+                  <AppText variant="mono" color={Colors.accent} style={{ fontSize: 10, fontWeight: '700' }}>
+                    SENT ✓
+                  </AppText>
+                ) : interactionStats && (interactionStats.sent_count > 0 || interactionStats.received_count > 0) ? (
+                  <AppText variant="mono" color={Colors.accent} style={{ fontSize: 10 }}>
+                    {interactionStats.sent_count} SENT · {interactionStats.received_count} RECEIVED
+                  </AppText>
+                ) : (
+                  <AppText variant="mono" color={Colors.accent} style={{ fontSize: 10 }}>
+                    SILENT PING
+                  </AppText>
+                )}
+              </View>
+              <AppText variant="display" size={24} style={{ lineHeight: 28, marginBottom: 4 }}>
+                Thinking of you
+              </AppText>
+              <AppText variant="serifItalic" size={14} color={Colors.muted} style={{ lineHeight: 22 }}>
+                {thinkingSent
+                  ? `Silent ping delivered to ${partnerName}.`
+                  : `Send a silent ping to let ${partnerName} know they're on your mind.`}
+              </AppText>
+            </Pressable>
+
             {/* The Ladder */}
             <Pressable style={styles.door} onPress={() => setSection('ladder')}>
               <View style={styles.doorHeader}>
