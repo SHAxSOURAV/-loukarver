@@ -43,7 +43,10 @@ const Login = () => {
               routes: [{ name: 'AlignedApp' }],
             });
           } else {
-            navigation.navigate('ModeSelector', { autoSelect: route.params?.returnTo });
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'ModeSelector', params: { autoSelect: route.params?.returnTo } }],
+            });
           }
         } catch (e) {
           console.log("Auto-login failed:", e);

@@ -9,13 +9,19 @@ console.log('[API] Current baseURL is:', baseURL);
 
 const api = axios.create({
   baseURL,
+  timeout: 15000, // 15 seconds timeout to prevent indefinite network hanging
 });
 
 api.interceptors.request.use(
   async config => {
     const token = await AsyncStorage.getItem('access_token');
     if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+      if (config.headers && typeof config.headers.set === 'function') {
+        config.headers.set('Authorization', `Bearer ${token}`);
+      } else {
+        config.headers = config.headers || {};
+        config.headers.Authorization = `Bearer ${token}`;
+      }
     }
     return config;
   },
@@ -58,7 +64,13 @@ api.interceptors.response.use(
         failedQueue.push({ resolve, reject });
       })
         .then(token => {
-          originalRequest.headers.Authorization = `Bearer ${token}`;
+          originalRequest._retry = true;
+          if (originalRequest.headers && typeof originalRequest.headers.set === 'function') {
+            originalRequest.headers.set('Authorization', `Bearer ${token}`);
+          } else {
+            originalRequest.headers = originalRequest.headers || {};
+            originalRequest.headers.Authorization = `Bearer ${token}`;
+          }
           return api(originalRequest);
         })
         .catch(err => Promise.reject(err));
@@ -73,10 +85,12 @@ api.interceptors.response.use(
         throw new Error('No refresh token stored');
       }
 
-      // Use raw unintercepted axios to avoid recursive loops
-      const refreshResponse = await axios.post(`${baseURL}/auth/refresh`, {
-        refresh_token: storedRefreshToken,
-      });
+      // Use raw unintercepted axios with a strict 10s timeout to avoid recursive loops or hangs
+      const refreshResponse = await axios.post(
+        `${baseURL}/auth/refresh`,
+        { refresh_token: storedRefreshToken },
+        { timeout: 10000 }
+      );
 
       const newAccessToken = refreshResponse.data?.access_token;
       if (!newAccessToken) {
@@ -85,22 +99,27 @@ api.interceptors.response.use(
 
       await AsyncStorage.setItem('access_token', newAccessToken);
       api.defaults.headers.common['Authorization'] = `Bearer ${newAccessToken}`;
-      originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+      if (originalRequest.headers && typeof originalRequest.headers.set === 'function') {
+        originalRequest.headers.set('Authorization', `Bearer ${newAccessToken}`);
+      } else {
+        originalRequest.headers = originalRequest.headers || {};
+        originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+      }
 
       processQueue(null, newAccessToken);
 
-      // Trigger automatic re-render in UI components
-      DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
-      DeviceEventEmitter.emit('REFRESH_MAP_DATA');
-
+      // Successfully retried original caller request (Note: We do NOT emit global REFRESH events here,
+      // which previously triggered an avalanche of 25+ simultaneous requests across all tabs).
       return api(originalRequest);
     } catch (refreshErr) {
       processQueue(refreshErr, null);
-      if (refreshErr.response?.status === 401 || refreshErr.response?.status === 400) {
+      // On ANY refresh failure (invalid token, missing token, 400/401, or server rejection),
+      // cleanly wipe credentials and notify RootNavigator to navigate to Login immediately.
+      try {
         delete api.defaults.headers.common['Authorization'];
         await AsyncStorage.multiRemove(['access_token', 'refresh_token']);
         DeviceEventEmitter.emit('AUTH_LOGOUT');
-      }
+      } catch (_) {}
       return Promise.reject(refreshErr);
     } finally {
       isRefreshing = false;

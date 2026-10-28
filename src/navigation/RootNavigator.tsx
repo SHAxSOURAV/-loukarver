@@ -94,6 +94,24 @@ const linking = {
 };
 
 export default function RootNavigator() {
+  // Listen for AUTH_LOGOUT emitted on session expiration / refresh token revocation
+  useEffect(() => {
+    const subLogout = DeviceEventEmitter.addListener('AUTH_LOGOUT', () => {
+      console.log('[RootNavigator] AUTH_LOGOUT event received. Safely resetting stack to Login.');
+      try {
+        const { clearMeCache } = require('../services/authApi');
+        clearMeCache();
+      } catch (_) {}
+      if (navigationRef.isReady()) {
+        navigationRef.reset({
+          index: 0,
+          routes: [{ name: 'Login' }],
+        });
+      }
+    });
+    return () => subLogout.remove();
+  }, []);
+
   // Fix #7: Override Alert.alert AFTER React tree mounts (CustomAlert listener is ready)
   useEffect(() => {
     const { Alert } = require('react-native');

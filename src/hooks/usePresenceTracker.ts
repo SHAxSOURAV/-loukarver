@@ -54,7 +54,11 @@ export const usePresenceTracker = () => {
             longitude = location.coords.longitude;
 
             try {
-              const reverseGeocode = await Location.reverseGeocodeAsync({ latitude, longitude });
+              const reverseGeocode = await Promise.race([
+                Location.reverseGeocodeAsync({ latitude, longitude }),
+                new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+              ]).catch(() => null);
+
               if (reverseGeocode && reverseGeocode.length > 0) {
                 const place = reverseGeocode[0];
                 city =
