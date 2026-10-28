@@ -97,6 +97,19 @@ async def get_daily_cards(
         "current_journey_day": daily_data["current_journey_day"]
     }
 
+async def _broadcast_partner_answered(user_id: str):
+    try:
+        cursor = vibe_card_service.vibe_connections.find({"user_id": user_id}, {"partner_id": 1})
+        conn_docs = await cursor.to_list(length=None)
+        partner_ids = [c["partner_id"] for c in conn_docs]
+        for p_id in partner_ids:
+            await manager.send_personal_message(
+                {"type": "PARTNER_ANSWERED", "partner_id": user_id},
+                p_id
+            )
+    except Exception as e:
+        print(f"[WebSocket] Background broadcast failed for {user_id}: {e}")
+
 @router.post("/answer", response_model=GenericResponse)
 async def submit_vibe_answers(
     payload: VibeAnswerSubmit,
@@ -104,21 +117,9 @@ async def submit_vibe_answers(
 ):
     """Submit your answers for today's Vibe Cards."""
     try:
-        print(f"SUBMIT ANSWERS: user_id={current_user['id']}")
         res = await vibe_card_service.submit_answers(current_user["id"], payload)
-        
-        # Broadcast to partners
-        cursor = vibe_card_service.vibe_connections.find({"user_id": current_user["id"]}, {"partner_id": 1})
-        conn_docs = await cursor.to_list(length=None)
-        partner_ids = [c["partner_id"] for c in conn_docs]
-        print(f"BROADCASTING to partners: {partner_ids}")
-        
-        for p_id in partner_ids:
-            await manager.send_personal_message(
-                {"type": "PARTNER_ANSWERED", "partner_id": current_user["id"]}, 
-                p_id
-            )
-            
+        # Non-blocking WebSocket broadcast to partners via background task
+        asyncio.create_task(_broadcast_partner_answered(current_user["id"]))
         return res
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
