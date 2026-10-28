@@ -26,22 +26,62 @@ class InteractionService:
         except Exception as e:
             print(f"Error initializing interaction indexes: {e}")
 
-    async def _get_couple_info(self, user_id: str, user_doc: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    async def _get_couple_info(self, user_id: str, partner_id: Optional[str] = None, user_doc: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         user = user_doc if user_doc is not None else await self.users.find_one({"_id": ObjectId(user_id)})
-        if not user or not user.get("is_aligned") or not user.get("partner"):
+        if not user:
+            return None
+        
+        # If partner_id is explicitly provided (e.g. from Vibe Check)
+        if partner_id:
+            is_vibe = False
+            partner_name = "Partner"
+            
+            if user.get("is_aligned") and user.get("partner", {}).get("user_id") == partner_id:
+                partner_name = user["partner"].get("name", "Partner")
+            else:
+                conn = await self.db["vibe_check_connections"].find_one({
+                    "user_id": user_id,
+                    "partner_id": partner_id,
+                    "status": "active"
+                })
+                if not conn:
+                    conn = await self.db["vibe_check_connections"].find_one({
+                        "user_id": partner_id,
+                        "partner_id": user_id,
+                        "status": "active"
+                    })
+                if not conn:
+                    return None
+                
+                is_vibe = True
+                partner_doc = await self.users.find_one({"_id": ObjectId(partner_id)}, {"name": 1})
+                if partner_doc:
+                    partner_name = partner_doc.get("name", "Partner")
+
+            return {
+                "user_id": user_id,
+                "user_name": user.get("name", "User"),
+                "partner_id": partner_id,
+                "partner_name": partner_name,
+                "is_vibe": is_vibe
+            }
+
+        # Otherwise fallback to default aligned partner
+        if not user.get("is_aligned") or not user.get("partner"):
             return None
         return {
             "user_id": user_id,
             "user_name": user.get("name", "User"),
             "partner_id": user["partner"]["user_id"],
-            "partner_name": user["partner"].get("name", "Partner")
+            "partner_name": user["partner"].get("name", "Partner"),
+            "is_vibe": False
         }
 
     def _get_today_str(self) -> str:
         return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    async def increment_count(self, user_id: str, user_doc: Optional[Dict[str, Any]] = None) -> bool:
-        info = await self._get_couple_info(user_id, user_doc=user_doc)
+    async def increment_count(self, user_id: str, partner_id: Optional[str] = None, user_doc: Optional[Dict[str, Any]] = None) -> bool:
+        info = await self._get_couple_info(user_id, partner_id=partner_id, user_doc=user_doc)
         if not info:
             return False
 
@@ -68,6 +108,7 @@ class InteractionService:
                 "type": "POKE_RECEIVED",
                 "partner_name": info["user_name"]
             })
+            screen_name = "Pulse" if info.get("is_vibe") else "Home"
             await notification_service.schedule_notification(
                 sender_id=user_id,
                 payload=NotificationCreate(
@@ -78,7 +119,7 @@ class InteractionService:
                     scheduled_for=datetime.now(timezone.utc),
                     timezone="UTC",
                     metadata={
-                        "screen": "Home",
+                        "screen": screen_name,
                         "section": "moment",
                         "action": "silent_ping"
                     }
@@ -89,8 +130,8 @@ class InteractionService:
 
         return True
 
-    async def get_interaction_stats(self, user_id: str, user_doc: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-        info = await self._get_couple_info(user_id, user_doc=user_doc)
+    async def get_interaction_stats(self, user_id: str, partner_id: Optional[str] = None, user_doc: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        info = await self._get_couple_info(user_id, partner_id=partner_id, user_doc=user_doc)
         if not info:
             return None
 

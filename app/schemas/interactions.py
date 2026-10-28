@@ -16,3 +16,6 @@ class InteractionResponse(BaseModel):
 class GenericResponse(BaseModel):
     success: bool
     message: str
+
+class PokeRequest(BaseModel):
+    partner_id: Optional[str] = None
