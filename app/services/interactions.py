@@ -64,7 +64,10 @@ class InteractionService:
         )
 
         try:
-            await ws_manager.broadcast_to_user(info["partner_id"], {"type": "POKE_RECEIVED"})
+            await ws_manager.broadcast_to_user(info["partner_id"], {
+                "type": "POKE_RECEIVED",
+                "partner_name": info["user_name"]
+            })
             await notification_service.schedule_notification(
                 sender_id=user_id,
                 payload=NotificationCreate(

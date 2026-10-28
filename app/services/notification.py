@@ -88,6 +88,7 @@ class NotificationService:
             "headings": {"en": title},
             "contents": {"en": message},
             "priority": 10,
+            "ios_interruption_level": "time-sensitive",
             "ios_badgeType": "Increase",
             "ios_badgeCount": 1,
             "ios_sound": "default",
@@ -106,22 +107,25 @@ class NotificationService:
         except Exception as e:
             print(f"Failed to send OneSignal push: {str(e)}")
 
+    def _recipient_filter(self, user_id: str) -> Dict[str, Any]:
+        targets = [str(user_id)]
+        if ObjectId.is_valid(user_id):
+            targets.append(ObjectId(user_id))
+        return {"$in": targets}
+
     async def get_my_notifications(self, user_id: str, page: int = 1, size: int = 20, user_timezone: str = "UTC", types: Optional[List[str]] = None, is_hidden: Optional[bool] = None) -> Tuple[List[Dict[str, Any]], int, int]:
-        query = {"recipient_id": user_id}
+        rf = self._recipient_filter(user_id)
+        query = {"recipient_id": rf}
         if types:
             query["type"] = {"$in": types}
         if is_hidden is not None:
             query["is_hidden"] = is_hidden
-        else:
-            # By default, treat missing is_hidden as false or missing, unless explicitly querying for hidden
-            # Actually if not specified, it's safer to just let it return anything (or we can enforce unhidden only if we want, but returning all is fine if they don't ask).
-            pass
         
         # Auto-mark delivered if scheduled time has passed
         now = datetime.now(timezone.utc)
         
         # Update delivered status only for the filtered types (if any)
-        delivered_query = {"recipient_id": user_id, "status": NotificationStatus.SCHEDULED, "scheduled_for": {"$lte": now}}
+        delivered_query = {"recipient_id": rf, "status": NotificationStatus.SCHEDULED, "scheduled_for": {"$lte": now}}
         if types:
             delivered_query["type"] = {"$in": types}
             
@@ -140,7 +144,7 @@ class NotificationService:
         skip = (page - 1) * size
         cursor = self.notifications_collection.find(query).sort("scheduled_for", -1).skip(skip).limit(size)
         
-        unread_query = {"recipient_id": user_id, "status": {"$ne": NotificationStatus.SEEN}}
+        unread_query = {"recipient_id": rf, "status": {"$ne": NotificationStatus.SEEN}}
         if types:
             unread_query["type"] = {"$in": types}
         if is_hidden is not None:
@@ -158,8 +162,9 @@ class NotificationService:
 
     async def mark_as_seen(self, notification_id: str, user_id: str) -> bool:
         now_utc = datetime.now(timezone.utc)
+        rf = self._recipient_filter(user_id)
         result = await self.notifications_collection.update_one(
-            {"_id": ObjectId(notification_id), "recipient_id": user_id},
+            {"_id": ObjectId(notification_id), "recipient_id": rf},
             {"$set": {"status": NotificationStatus.SEEN, "seen_at": now_utc}}
         )
         if result.matched_count > 0:
@@ -172,8 +177,9 @@ class NotificationService:
 
     async def mark_all_as_seen(self, user_id: str) -> int:
         now_utc = datetime.now(timezone.utc)
+        rf = self._recipient_filter(user_id)
         result = await self.notifications_collection.update_many(
-            {"recipient_id": user_id, "status": {"$ne": NotificationStatus.SEEN}},
+            {"recipient_id": rf, "status": {"$ne": NotificationStatus.SEEN}},
             {"$set": {"status": NotificationStatus.SEEN, "seen_at": now_utc}}
         )
         if result.modified_count > 0:
@@ -184,35 +190,40 @@ class NotificationService:
         return result.modified_count
 
     async def mark_as_unread(self, notification_id: str, user_id: str) -> bool:
+        rf = self._recipient_filter(user_id)
         result = await self.notifications_collection.update_one(
-            {"_id": ObjectId(notification_id), "recipient_id": user_id},
+            {"_id": ObjectId(notification_id), "recipient_id": rf},
             {"$set": {"status": NotificationStatus.DELIVERED}, "$unset": {"seen_at": ""}}
         )
         return result.modified_count > 0
 
     async def delete_notification(self, notification_id: str, user_id: str) -> bool:
+        rf = self._recipient_filter(user_id)
         result = await self.notifications_collection.delete_one(
-            {"_id": ObjectId(notification_id), "recipient_id": user_id}
+            {"_id": ObjectId(notification_id), "recipient_id": rf}
         )
         return result.deleted_count > 0
 
     async def hide_notification(self, notification_id: str, user_id: str) -> bool:
+        rf = self._recipient_filter(user_id)
         result = await self.notifications_collection.update_one(
-            {"_id": ObjectId(notification_id), "recipient_id": user_id},
+            {"_id": ObjectId(notification_id), "recipient_id": rf},
             {"$set": {"is_hidden": True}}
         )
         return result.modified_count > 0
 
     async def unhide_notification(self, notification_id: str, user_id: str) -> bool:
+        rf = self._recipient_filter(user_id)
         result = await self.notifications_collection.update_one(
-            {"_id": ObjectId(notification_id), "recipient_id": user_id},
+            {"_id": ObjectId(notification_id), "recipient_id": rf},
             {"$set": {"is_hidden": False}}
         )
         return result.modified_count > 0
 
     async def clear_all_notifications(self, user_id: str) -> int:
+        rf = self._recipient_filter(user_id)
         result = await self.notifications_collection.delete_many(
-            {"recipient_id": user_id}
+            {"recipient_id": rf}
         )
         return result.deleted_count
 
