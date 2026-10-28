@@ -23,7 +23,10 @@
         "NSMicrophoneUsageDescription": "Allow Samesy to access your microphone for voice notes.",
         "NSLocationWhenInUseUsageDescription": "Allow Samesy to access your location to show your accurate local time and city to your partner.",
         "ITSAppUsesNonExemptEncryption": false,
-        "NSPhotoLibraryAddUsageDescription": "Allow Samesy to save photos and memories to your photo library."
+        "NSPhotoLibraryAddUsageDescription": "Allow Samesy to save photos and memories to your photo library.",
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
       }
     },
     "android": {
@@ -46,7 +49,9 @@
         "android.permission.READ_MEDIA_AUDIO",
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.VIBRATE"
       ]
     },
     "plugins": [

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { View, Text, StyleSheet, AppState, DeviceEventEmitter } from 'react-native';
+import { View, Text, StyleSheet, AppState, DeviceEventEmitter, Vibration } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlignedTabParamList } from '../types';
 import { Colors } from '../constants/colors';
@@ -73,7 +74,25 @@ function useGlobalWebSocket() {
             if (typeof event.data !== 'string' || !event.data.trim()) return;
             const data = JSON.parse(event.data);
             console.log("Global WebSocket Message:", data);
-            if (data.type === "THREAD_UPDATED" || data.type === "new_thread_message") {
+            if (data.type === "POKE_RECEIVED") {
+              try {
+                Vibration.vibrate([0, 500, 200, 500]);
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+              } catch (_) {}
+              const partnerName = data.partner_name || 'Your partner';
+              DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
+                type: 'Thinking of You',
+                title: 'Thinking of You 💕',
+                message: `${partnerName} sent you a ping!`,
+                metadata: {
+                  screen: 'Home',
+                  section: 'moment',
+                  action: 'silent_ping',
+                },
+              });
+              DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
+              DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
+            } else if (data.type === "THREAD_UPDATED" || data.type === "new_thread_message") {
               DeviceEventEmitter.emit('NEW_THREAD_MESSAGE', data);
             } else if (data.type === "MAP_UPDATED") {
               DeviceEventEmitter.emit('REFRESH_MAP_DATA');
@@ -89,6 +108,12 @@ function useGlobalWebSocket() {
             } else if (data.type === "NEW_NOTIFICATION") {
               const notif = data.notification || {};
               const meta = notif.metadata || data.metadata || {};
+              if (meta.action === 'silent_ping' || notif.type === 'Thinking of You') {
+                try {
+                  Vibration.vibrate([0, 500, 200, 500]);
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+                } catch (_) {}
+              }
               DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
                 id: notif.id,
                 type: notif.type || 'Partner Update',

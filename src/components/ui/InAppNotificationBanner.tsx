@@ -139,7 +139,11 @@ export const InAppNotificationBanner: React.FC = () => {
     if (!notification) return;
 
     if (notification.id) {
-      markNotificationSeen(notification.id).catch(() => {});
+      markNotificationSeen(notification.id)
+        .then(() => {
+          DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
+        })
+        .catch(() => {});
       DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
     }
 

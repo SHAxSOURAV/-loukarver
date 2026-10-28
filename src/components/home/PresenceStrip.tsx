@@ -434,10 +434,10 @@ export const PresenceStrip: React.FC<PresenceStripProps> = ({ onRedirect, refres
     }
   }
 
-  // Find latest active presence event (excluding static pairing/system onboarding notifications)
+  // Find latest active presence event (excluding static pairing/system onboarding and already seen notifications)
   const systemTypes = ['State Update', 'Alignment Request', 'Alignment Connected!', 'System'];
   const activeEvents = presenceNotifications.filter(
-    (n: any) => !systemTypes.includes(n.type) && !n.message?.toLowerCase().includes("aligned with")
+    (n: any) => n.status !== 'Seen' && !systemTypes.includes(n.type) && !n.message?.toLowerCase().includes("aligned with")
   );
   const latestPresence = activeEvents.length > 0 ? activeEvents[0] : null;
   const partnerName = partner.name || 'Partner';

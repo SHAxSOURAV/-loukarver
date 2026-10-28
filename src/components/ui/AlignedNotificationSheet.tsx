@@ -106,9 +106,9 @@ export const AlignedNotificationSheet: React.FC<AlignedNotificationSheetProps> =
 
   const handleMarkAllRead = async () => {
     try {
-      await markAllNotificationsSeen();
       setNotifications(prev => prev.map(n => ({ ...n, status: 'Seen' })));
       DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED', 0);
+      await markAllNotificationsSeen();
       DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
     } catch (e) {
       console.log('Error marking all seen:', e);
@@ -162,12 +162,12 @@ export const AlignedNotificationSheet: React.FC<AlignedNotificationSheetProps> =
         return next;
       });
       DeviceEventEmitter.emit('UNREAD_NOTIFICATIONS_CHANGED');
-      DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
       try {
         await markNotificationSeen(n.id);
       } catch (err) {
         console.log('Error marking notification seen:', err);
       }
+      DeviceEventEmitter.emit('REFRESH_ALIGNED_DATA');
     }
     handleNotificationDeepLink(n, navigation, onClose);
   };

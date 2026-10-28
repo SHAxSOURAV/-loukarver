@@ -26,7 +26,8 @@ import ReportScreen from '../screens/ReportScreen';
 import ReportChatScreen from '../screens/ReportChatScreen';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getMe } from '../services/authApi';
-import { Platform, DeviceEventEmitter } from 'react-native';
+import { Platform, DeviceEventEmitter, Vibration } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { handleNotificationDeepLink } from '../utils/notificationDeepLink';
 
@@ -155,6 +156,12 @@ export default function RootNavigator() {
             const notification = event?.getNotification ? event.getNotification() : event?.notification;
             if (notification) {
               const data = notification.additionalData || {};
+              if (data.action === 'silent_ping' || data.type === 'Thinking of You' || notification.title?.includes('Thinking')) {
+                try {
+                  Vibration.vibrate([0, 500, 200, 500]);
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+                } catch (_) {}
+              }
               DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
                 id: notification.notificationId,
                 type: data.type || 'Partner Update',

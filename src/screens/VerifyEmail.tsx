@@ -39,10 +39,28 @@ const VerifyEmail = () => {
       await AsyncStorage.setItem('access_token', data.access_token);
       await AsyncStorage.setItem('refresh_token', data.refresh_token);
 
-      const { clearMeCache } = require('../services/authApi');
+      const { clearMeCache, getMe } = require('../services/authApi');
       const api = require('../services/api').default;
       api.defaults.headers.common['Authorization'] = `Bearer ${data.access_token}`;
       clearMeCache();
+
+      try {
+        const Constants = require('expo-constants').default;
+        const ExecutionEnvironment = require('expo-constants').ExecutionEnvironment;
+        const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment?.StoreClient || Constants.appOwnership === 'expo';
+        
+        let uid = data?.user?.id || data?.user?._id;
+        if (!uid) {
+          const user = await getMe(true);
+          uid = user?.id || user?._id;
+        }
+        if (uid && Platform.OS !== 'web' && !isExpoGo) {
+          const { OneSignal } = require('react-native-onesignal');
+          OneSignal.login(String(uid));
+        }
+      } catch (e) {
+        console.log("Failed to login to OneSignal in VerifyEmail:", e);
+      }
 
       navigation.reset({
         index: 0,
