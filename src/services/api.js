@@ -97,6 +97,7 @@ api.interceptors.response.use(
     } catch (refreshErr) {
       processQueue(refreshErr, null);
       if (refreshErr.response?.status === 401 || refreshErr.response?.status === 400) {
+        delete api.defaults.headers.common['Authorization'];
         await AsyncStorage.multiRemove(['access_token', 'refresh_token']);
         DeviceEventEmitter.emit('AUTH_LOGOUT');
       }

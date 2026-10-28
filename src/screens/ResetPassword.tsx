@@ -27,24 +27,37 @@ const ResetPassword = () => {
 
   const handleReset = async () => {
     setErrorText('');
-    if (!otp || !newPassword) {
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanOtp = otp.trim();
+    if (!cleanOtp || !newPassword) {
       setErrorText('Please enter the reset code and your new password.');
       return;
     }
     try {
       setLoading(true);
-      const data = await resetPassword(email, otp, newPassword);
+      const data = await resetPassword(cleanEmail, cleanOtp, newPassword);
       await AsyncStorage.setItem('access_token', data.access_token);
       await AsyncStorage.setItem('refresh_token', data.refresh_token);
-      const { getMe } = require('../services/authApi');
-      const user = await getMe().catch(() => null);
+
+      const { clearMeCache, getMe } = require('../services/authApi');
+      const api = require('../services/api').default;
+      api.defaults.headers.common['Authorization'] = `Bearer ${data.access_token}`;
+      clearMeCache();
+
+      let user: any = data.user || null;
+      if (!user) {
+        user = await getMe(true).catch(() => null);
+      }
       if (user?.is_aligned || user?.partner) {
         navigation.reset({
           index: 0,
           routes: [{ name: 'AlignedApp' }],
         });
       } else {
-        navigation.navigate('ModeSelector');
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'ModeSelector' }],
+        });
       }
     } catch (error: any) {
       const errorMessage = error.response?.data?.detail || error.message || 'Reset failed.';

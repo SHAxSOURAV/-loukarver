@@ -30,14 +30,15 @@ const ForgotPassword = () => {
 
   const handleForgot = async () => {
     setErrorText('');
-    if (!email) {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
       setErrorText('Please enter your email address.');
       return;
     }
     try {
       setLoading(true);
-      await forgotPassword(email);
-      navigation.navigate('ResetPassword', { email });
+      await forgotPassword(cleanEmail);
+      navigation.navigate('ResetPassword', { email: cleanEmail });
     } catch (error: any) {
       const errorMessage = error.response?.data?.detail || error.message || 'An error occurred.';
       if (error.response?.status === 404 || errorMessage.toLowerCase().includes('not found')) {

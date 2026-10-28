@@ -55,31 +55,44 @@ const Login = () => {
 
   const handleLogin = async () => {
     setErrorMsg('');
-    if (!email || !password) {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPassword = password;
+    if (!cleanEmail || !cleanPassword) {
       setErrorMsg('Please enter both email and password.');
       return;
     }
     try {
       setLoading(true);
-      const data = await loginUser(email, password);
+      const data = await loginUser(cleanEmail, cleanPassword);
       await AsyncStorage.setItem('access_token', data.access_token);
       await AsyncStorage.setItem('refresh_token', data.refresh_token);
 
-      let user: any = null;
+      const { clearMeCache, getMe } = require('../services/authApi');
+      const api = require('../services/api').default;
+      api.defaults.headers.common['Authorization'] = `Bearer ${data.access_token}`;
+      clearMeCache();
+
+      let user: any = data.user || null;
+      if (!user) {
+        try {
+          user = await getMe(true);
+        } catch (e) {
+          console.log("Failed to fetch user after login:", e);
+        }
+      }
+
       try {
-        const { getMe } = require('../services/authApi');
-        user = await getMe();
-        
         const Constants = require('expo-constants').default;
         const ExecutionEnvironment = require('expo-constants').ExecutionEnvironment;
         const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment?.StoreClient || Constants.appOwnership === 'expo';
         
-        if (user && user.id && Platform.OS !== 'web' && !isExpoGo) {
+        const uid = user?.id || user?._id;
+        if (uid && Platform.OS !== 'web' && !isExpoGo) {
           const { OneSignal } = require('react-native-onesignal');
-          OneSignal.login(user.id);
+          OneSignal.login(String(uid));
         }
       } catch (e) {
-        console.log("Failed to login to OneSignal / fetch user:", e);
+        console.log("Failed to login to OneSignal:", e);
       }
 
       const returnTo = route.params?.returnTo;
@@ -89,7 +102,10 @@ const Login = () => {
           routes: [{ name: 'AlignedApp' }],
         });
       } else {
-        navigation.navigate('ModeSelector', { autoSelect: returnTo });
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'ModeSelector', params: { autoSelect: returnTo } }],
+        });
       }
     } catch (error: any) {
       let errorMessage = error.response?.data?.detail || error.message || 'An error occurred during login.';
@@ -133,6 +149,7 @@ const Login = () => {
               placeholder="x1@yopmail.com"
               keyboardType="email-address"
               autoCapitalize="none"
+              autoCorrect={false}
               autoComplete="email"
               textContentType="emailAddress"
               returnKeyType="next"

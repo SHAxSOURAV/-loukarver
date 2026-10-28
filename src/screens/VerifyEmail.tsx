@@ -27,21 +27,26 @@ const VerifyEmail = () => {
 
   const handleVerify = async () => {
     setErrorMsg('');
-    if (!otp) {
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanOtp = otp.trim();
+    if (!cleanOtp) {
       setErrorMsg('Please enter the verification code.');
       return;
     }
     try {
       setLoading(true);
-      const data = await verifyEmail(email, otp);
+      const data = await verifyEmail(cleanEmail, cleanOtp);
       await AsyncStorage.setItem('access_token', data.access_token);
       await AsyncStorage.setItem('refresh_token', data.refresh_token);
+
+      const { clearMeCache } = require('../services/authApi');
+      const api = require('../services/api').default;
+      api.defaults.headers.common['Authorization'] = `Bearer ${data.access_token}`;
+      clearMeCache();
+
       navigation.reset({
-        index: 1,
-        routes: [
-          { name: 'Signup' },
-          { name: 'ModeSelector' },
-        ],
+        index: 0,
+        routes: [{ name: 'ModeSelector' }],
       });
     } catch (error: any) {
       const errorMessage = error.response?.data?.detail || error.message || 'Verification failed.';

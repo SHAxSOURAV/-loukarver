@@ -411,6 +411,10 @@ export const AlignedProfileScreen: React.FC = () => {
       } catch (err) {
         console.log('Failed to logout from OneSignal', err);
       }
+      const { clearMeCache } = require('../../services/authApi');
+      const api = require('../../services/api').default;
+      clearMeCache();
+      delete api.defaults.headers.common['Authorization'];
       await AsyncStorage.multiRemove(['access_token', 'refresh_token']);
       nav.reset({ index: 0, routes: [{ name: route }] });
     } catch (e) {
@@ -974,7 +978,7 @@ export const AlignedProfileScreen: React.FC = () => {
               size="lg"
               onPress={() => {
                 setSignoutSheet(false);
-                performSignout('ModeSelector');
+                nav.reset({ index: 0, routes: [{ name: 'ModeSelector' }] });
               }}
               style={{ width: '100%' }}
             >

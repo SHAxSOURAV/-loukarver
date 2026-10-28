@@ -31,14 +31,15 @@ const Signup = () => {
 
   const handleSignup = async () => {
     setErrorMsg('');
-    if (!email || !password) {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !password) {
       setErrorMsg('Please enter both email and password.');
       return;
     }
     try {
       setLoading(true);
-      await signupUser(email, password);
-      navigation.navigate('VerifyEmail', { email });
+      await signupUser(cleanEmail, password);
+      navigation.navigate('VerifyEmail', { email: cleanEmail });
     } catch (error: any) {
       let errorMessage = error.response?.data?.detail || error.message || 'An error occurred during signup.';
       if (errorMessage.toLowerCase() === 'network error') {
@@ -81,6 +82,7 @@ const Signup = () => {
               placeholder="lou@example.com"
               keyboardType="email-address"
               autoCapitalize="none"
+              autoCorrect={false}
               autoComplete="email"
               textContentType="emailAddress"
               returnKeyType="next"
