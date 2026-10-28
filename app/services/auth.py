@@ -123,7 +123,7 @@ class AuthService:
         self.collection = relationship_service.collection
 
     async def signup(self, payload: SignupRequest) -> Dict[str, Any]:
-        email = payload.email.lower()
+        email = payload.email.strip().lower()
         password_hash = hash_password(payload.password)
         otp = "".join(random.choices(string.digits, k=6))
         
@@ -220,7 +220,7 @@ class AuthService:
         return new_user
 
     async def verify_email(self, payload: VerifyEmailRequest) -> Dict[str, Any]:
-        email = payload.email.lower()
+        email = payload.email.strip().lower()
         user = await self.collection.find_one({"email": email})
         if not user:
             raise ValueError("User not found")
@@ -248,7 +248,7 @@ class AuthService:
         }
 
     async def resend_otp(self, payload: ResendOtpRequest) -> bool:
-        email = payload.email.lower()
+        email = payload.email.strip().lower()
         user = await self.collection.find_one({"email": email})
         if not user:
             raise ValueError("User not found")
@@ -267,7 +267,7 @@ class AuthService:
         return True
 
     async def signin(self, payload: SigninRequest) -> Dict[str, Any]:
-        email = payload.email.lower()
+        email = payload.email.strip().lower()
         user = await self.collection.find_one({"email": email})
         if not user or not user.get("password_hash") or not verify_password(payload.password, user["password_hash"]):
             raise ValueError("Invalid email or password")
@@ -493,7 +493,7 @@ class AuthService:
         return create_access_token({"user_id": user_id, "email": email})
 
     async def forgot_password(self, payload: ForgotPasswordRequest) -> bool:
-        email = payload.email.lower()
+        email = payload.email.strip().lower()
         user = await self.collection.find_one({"email": email})
         if not user:
             raise ValueError("User not found")
@@ -509,7 +509,7 @@ class AuthService:
         return True
 
     async def reset_password(self, payload: ResetPasswordRequest) -> bool:
-        email = payload.email.lower()
+        email = payload.email.strip().lower()
         user = await self.collection.find_one({"email": email})
         if not user:
             raise ValueError("User not found")

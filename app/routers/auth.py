@@ -122,7 +122,8 @@ async def signin(payload: SigninRequest):
         result = await auth_service.signin(payload)
         return TokenResponse(
             access_token=result["access_token"],
-            refresh_token=result["refresh_token"]
+            refresh_token=result["refresh_token"],
+            user=result.get("user")
         )
     except ValueError as ve:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(ve))

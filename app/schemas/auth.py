@@ -64,6 +64,7 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    user: Optional["UserMeResponse"] = None
 
 class UserMeResponse(BaseModel):
     id: str = Field(..., validation_alias=AliasChoices("id", "_id"))
