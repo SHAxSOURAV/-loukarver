@@ -33,7 +33,8 @@ export const InAppNotificationBanner: React.FC = () => {
   const translateY = useRef(new Animated.Value(-160)).current;
   const opacity = useRef(new Animated.Value(0)).current;
   const hideTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const lastNotifRef = useRef<{ key: string; time: number } | null>(null);
+  const seenIdsRef = useRef<Set<string>>(new Set());
+  const recentKeyTimesRef = useRef<Map<string, number>>(new Map());
 
   const clearTimer = () => {
     if (hideTimerRef.current) {
@@ -42,8 +43,13 @@ export const InAppNotificationBanner: React.FC = () => {
     }
   };
 
-  const hideBanner = () => {
+  const hideBanner = (wasPressed = false) => {
     clearTimer();
+    const currentId = notification?.id;
+    if (currentId && !wasPressed) {
+      // Auto-dismissed or swiped away: mark as seen so it never pops up again
+      markNotificationSeen(currentId).catch(() => {});
+    }
     Animated.parallel([
       Animated.timing(translateY, {
         toValue: -160,
@@ -61,13 +67,23 @@ export const InAppNotificationBanner: React.FC = () => {
   };
 
   const showBanner = (payload: InAppNotificationPayload) => {
-    // Deduplication check: prevent duplicate popups/buzzes within 2 seconds
-    const notifKey = payload.id || `${payload.title}_${payload.message || ''}`;
-    const now = Date.now();
-    if (lastNotifRef.current && lastNotifRef.current.key === notifKey && now - lastNotifRef.current.time < 2000) {
+    // 1. Persistent ID deduping: never re-show a notification that was already presented
+    if (payload.id && seenIdsRef.current.has(payload.id)) {
       return;
     }
-    lastNotifRef.current = { key: notifKey, time: now };
+
+    // 2. Text deduplication: prevent duplicate popups/buzzes within 30 seconds
+    const textKey = `${payload.title}_${payload.message || ''}`;
+    const now = Date.now();
+    const lastTime = recentKeyTimesRef.current.get(textKey) || 0;
+    if (now - lastTime < 30000) {
+      return;
+    }
+
+    if (payload.id) {
+      seenIdsRef.current.add(payload.id);
+    }
+    recentKeyTimesRef.current.set(textKey, now);
 
     clearTimer();
     setNotification(payload);
@@ -101,7 +117,7 @@ export const InAppNotificationBanner: React.FC = () => {
 
     const duration = payload.durationMs || 4500;
     hideTimerRef.current = setTimeout(() => {
-      hideBanner();
+      hideBanner(false);
     }, duration);
   };
 
@@ -129,7 +145,7 @@ export const InAppNotificationBanner: React.FC = () => {
       },
       onPanResponderRelease: (_, gestureState) => {
         if (gestureState.dy < -15) {
-          hideBanner();
+          hideBanner(true);
         }
       },
     })
@@ -155,7 +171,7 @@ export const InAppNotificationBanner: React.FC = () => {
       }
     }
 
-    hideBanner();
+    hideBanner(true);
   };
 
   if (!notification) return null;
@@ -218,7 +234,7 @@ export const InAppNotificationBanner: React.FC = () => {
               · Just now
             </AppText>
           </View>
-          <Pressable onPress={hideBanner} hitSlop={10} style={styles.closeBtn}>
+          <Pressable onPress={() => hideBanner(false)} hitSlop={10} style={styles.closeBtn}>
             <Ionicons name="close" size={16} color={Colors.muted} />
           </Pressable>
         </View>

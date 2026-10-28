@@ -62,7 +62,7 @@ const AlignedNav: React.FC = () => {
     try {
       const [me, notifs] = await Promise.all([
         getMe().catch(() => null),
-        getMyNotifications(1, 1).catch(() => null),
+        getMyNotifications(1, 1, null, false).catch(() => null),
       ]);
       if (me) {
         setUser(me);

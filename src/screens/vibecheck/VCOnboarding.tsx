@@ -2,7 +2,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import React, { useState } from 'react';
 import { View, StyleSheet, Pressable, Alert, useWindowDimensions, Keyboard } from 'react-native';
 import { KeyboardAwareScrollView, KeyboardStickyView } from 'react-native-keyboard-controller';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { Colors } from '../../constants/colors';
 import { AppText } from '../../components/ui/AppText';
@@ -10,7 +10,7 @@ import { AppButton } from '../../components/ui/AppButton';
 import { AppTextInput } from '../../components/ui/AppTextInput';
 import { BottomSheet } from '../../components/ui/BottomSheet';
 import { RootStackParamList } from '../../types';
-import { setupVibeProfile, connectWithKey, generateInvite } from '../../services/vibeCheckApi';
+import { setupVibeProfile, connectWithKey, generateInvite, acceptInvite, getVibeProfile } from '../../services/vibeCheckApi';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -31,9 +31,26 @@ if (Platform.OS !== 'web') {
 }
 
 type Nav = StackNavigationProp<RootStackParamList>;
+type VCOnboardingRouteProp = RouteProp<RootStackParamList, 'VibeOnboarding'>;
 
 export const VCOnboarding: React.FC = () => {
   const nav = useNavigation<Nav>();
+  const route = useRoute<VCOnboardingRouteProp>();
+
+  React.useEffect(() => {
+    const incomingCode = route.params?.inviteCode;
+    if (incomingCode) {
+      const cleanCode = incomingCode.trim().toUpperCase();
+      setVibeKey(cleanCode);
+      setConnectOption('key');
+      getVibeProfile().then((prof) => {
+        if (prof && prof.user_id) {
+          setMyVibeKey(prof.vibe_key);
+          setStep(1);
+        }
+      }).catch(() => {});
+    }
+  }, [route.params?.inviteCode]);
 
   React.useEffect(() => {
     const checkAlignment = async () => {

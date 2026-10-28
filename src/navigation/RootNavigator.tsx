@@ -126,8 +126,9 @@ export default function RootNavigator() {
       const appId = process.env.EXPO_PUBLIC_ONESIGNAL_APP_ID;
       if (appId && Platform.OS !== 'web' && !isExpoGo) {
         const { OneSignal } = require('react-native-onesignal');
-        // Fix #3: Removed duplicate OneSignal.initialize() and requestPermission()
-        // — initialization is done ONCE in App.tsx at module level.
+        // Request notification permission to connect outside of the app
+        OneSignal.Notifications.requestPermission(true);
+
 
         const handleNotificationClick = (event: any) => {
           try {
@@ -153,9 +154,11 @@ export default function RootNavigator() {
 
         const handleForegroundNotification = (event: any) => {
           try {
+            event?.preventDefault();
             const notification = event?.getNotification ? event.getNotification() : event?.notification;
             if (notification) {
               const data = notification.additionalData || {};
+              const notifId = data.id || data._id || notification.notificationId;
               if (data.action === 'silent_ping' || data.type === 'Thinking of You' || notification.title?.includes('Thinking')) {
                 try {
                   Vibration.vibrate([0, 500, 200, 500]);
@@ -163,7 +166,7 @@ export default function RootNavigator() {
                 } catch (_) {}
               }
               DeviceEventEmitter.emit('SHOW_IN_APP_NOTIFICATION', {
-                id: notification.notificationId,
+                id: notifId,
                 type: data.type || 'Partner Update',
                 title: notification.title || 'Partner Activity',
                 message: notification.body || 'Your partner made a change',

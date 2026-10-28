@@ -191,7 +191,7 @@ export type RootStackParamList = {
   AlignedQRScanner: { onScan?: (data: string) => void } | undefined;
   AlignmentRequests: undefined;
   VibeWelcome: undefined;
-  VibeOnboarding: undefined;
+  VibeOnboarding: { inviteCode?: string } | undefined;
   VibeApp: undefined;
   VibeProfile: undefined;
   SecretHistory: undefined;

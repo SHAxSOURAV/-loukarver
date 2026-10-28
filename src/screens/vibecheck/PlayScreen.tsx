@@ -7,6 +7,8 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   RefreshControl,
+  Alert,
+  DeviceEventEmitter,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Colors } from "../../constants/colors";
@@ -22,6 +24,8 @@ import { VibeRefreshControl } from "../../components/ui/VibeRefreshControl";
 import { listVibeDates } from "../../services/vibeDatesApi";
 import { useNavigation } from "@react-navigation/native";
 import { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
+import * as Haptics from 'expo-haptics';
+import { pokePartner, getInteractions } from '../../services/interactionsApi';
 import {
   getVibeProfile,
   getDailyCards,
@@ -79,6 +83,33 @@ export const PlayScreen: React.FC = () => {
   const [myUserId, setMyUserId] = useState<string | null>(null);
   const [partnerSheet, setPartnerSheet] = useState(false);
   const [upcomingDate, setUpcomingDate] = useState<Date | null>(null);
+  const [thinkingSent, setThinkingSent] = useState(false);
+  const [interactionStats, setInteractionStats] = useState<any>(null);
+  const [isPoking, setIsPoking] = useState(false);
+
+  const handlePoke = async () => {
+    if (!partnerId) {
+      Alert.alert("Partner Required", "Please connect with a partner first to send a silent ping.");
+      return;
+    }
+    if (thinkingSent || isPoking) return;
+    setIsPoking(true);
+    try {
+      await pokePartner(partnerId || undefined);
+      try {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      } catch (_) {}
+      setThinkingSent(true);
+      const res = await getInteractions("UTC", partnerId).catch(() => null);
+      if (res?.success) setInteractionStats(res.data);
+      setTimeout(() => setThinkingSent(false), 3000);
+    } catch (e: any) {
+      const msg = e?.response?.data?.detail || "Could not send ping to partner.";
+      Alert.alert("Notice", msg);
+    } finally {
+      setIsPoking(false);
+    }
+  };
 
   const [myPick, setMyPick] = useState<"a" | "b" | null>(null);
   const [theirPick, setTheirPick] = useState<"a" | "b" | null>(null);
@@ -130,7 +161,7 @@ export const PlayScreen: React.FC = () => {
             setPartnerId(currentPId);
           }
 
-          const [dailyData, resultsData, streakData, datesRes] = await Promise.all([
+          const [dailyData, resultsData, streakData, intRes, datesRes] = await Promise.all([
             getDailyCards(currentPId).catch((e: any) => {
               return { questions: [] };
             }),
@@ -138,6 +169,7 @@ export const PlayScreen: React.FC = () => {
               return { data: [] };
             }),
             getVibeStreak(currentPId).catch(() => ({ current_streak: 0, cards_answered_today: 0 })),
+            getInteractions("UTC", currentPId || undefined).catch(() => null),
             listVibeDates(currentPId, 1, 100, Intl.DateTimeFormat().resolvedOptions().timeZone).catch(() => null)
           ]);
           
@@ -198,6 +230,7 @@ export const PlayScreen: React.FC = () => {
           }
           setDailyCards(dailyData?.questions || []);
           setStreak(streakData?.current_streak || 0);
+          if (intRes?.success) setInteractionStats(intRes.data);
         }
       } catch (err) {
         console.log("Error loading PlayScreen data:", err);
@@ -1101,6 +1134,28 @@ const styles = StyleSheet.create({
   },
   resultMatch: { backgroundColor: `${Colors.sage}12` },
   resultDiffer: { backgroundColor: `${Colors.cream}99` },
+  pingCard: {
+    padding: 20,
+    borderRadius: 14,
+    backgroundColor: Colors.bone,
+    borderWidth: 1,
+    borderColor: Colors.rule,
+    shadowColor: Colors.ink2,
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
+    marginBottom: 12,
+  },
+  pingCardSent: {
+    borderColor: Colors.accent,
+    backgroundColor: `${Colors.accent}08`,
+  },
+  pingHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
   pulseTease: {
     flexDirection: "row",
     alignItems: "center",

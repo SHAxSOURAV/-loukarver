@@ -17,6 +17,12 @@ export const triggerNotification = async (type, message, metadata = null) => {
   return response.data;
 };
 
+/**
+ * @param {number} [page]
+ * @param {number} [size]
+ * @param {string[]|null} [types]
+ * @param {boolean|null} [isHidden]
+ */
 export const getMyNotifications = async (page = 1, size = 20, types = null, isHidden = null) => {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   let url = `/notifications/?page=${page}&size=${size}&timezone=${encodeURIComponent(tz)}`;

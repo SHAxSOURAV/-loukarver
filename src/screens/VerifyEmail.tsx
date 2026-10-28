@@ -57,6 +57,7 @@ const VerifyEmail = () => {
         if (uid && Platform.OS !== 'web' && !isExpoGo) {
           const { OneSignal } = require('react-native-onesignal');
           OneSignal.login(String(uid));
+          OneSignal.Notifications.requestPermission(true);
         }
       } catch (e) {
         console.log("Failed to login to OneSignal in VerifyEmail:", e);

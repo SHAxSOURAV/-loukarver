@@ -18,6 +18,7 @@ import {
   getConnections,
   getRequests,
   generateInvite,
+  acceptInvite,
   connectWithKey,
   respondToRequest,
   deleteConnection,

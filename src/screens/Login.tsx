@@ -20,6 +20,7 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [isUnverified, setIsUnverified] = useState(false);
 
 
   useEffect(() => {
@@ -93,6 +94,7 @@ const Login = () => {
         if (uid && Platform.OS !== 'web' && !isExpoGo) {
           const { OneSignal } = require('react-native-onesignal');
           OneSignal.login(String(uid));
+          OneSignal.Notifications.requestPermission(true);
         }
       } catch (e) {
         console.log("Failed to login to OneSignal:", e);
@@ -148,7 +150,7 @@ const Login = () => {
               label="Email address"
               n="01"
               value={email}
-              onChangeText={(t) => { setEmail(t); setErrorMsg(''); }}
+              onChangeText={(t) => { setEmail(t); setErrorMsg(''); setIsUnverified(false); }}
               placeholder="x1@yopmail.com"
               keyboardType="email-address"
               autoCapitalize="none"
