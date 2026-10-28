@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   ScrollView,
@@ -84,6 +84,15 @@ export const PlayScreen: React.FC = () => {
   const [theirPick, setTheirPick] = useState<"a" | "b" | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [debugText, setDebugText] = useState("");
+  const autoAdvanceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (autoAdvanceTimerRef.current) {
+        clearTimeout(autoAdvanceTimerRef.current);
+      }
+    };
+  }, []);
   
   // A small local counter so we can show "Card 1 of 3" etc while moving through them
   // This is offset by cardsAnsweredToday on mount.
@@ -347,44 +356,97 @@ export const PlayScreen: React.FC = () => {
 
   const matched = revealed && myPick !== null && theirPick !== null && myPick === theirPick;
 
-  const handlePick = async (pick: "a" | "b") => {
+  const handlePick = (pick: "a" | "b") => {
+    if (!card || myPick !== null) return;
+    if (autoAdvanceTimerRef.current) {
+      clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
+
+    // 1. Instant local optimistic selection (0ms)
     setMyPick(pick);
-    if (!card) return;
+    const option = pick === "a" ? "A" : "B";
+    const currentCardId = card.id;
 
-    try {
-      const option = pick === "a" ? "A" : "B";
-      if (!partnerId) return;
-      // Submit single answer to backend
-      await submitVibeAnswers(partnerId, [{ question_id: card.id, selected_option: option }]);
-      
-      // Check if partner answered
-      let foundMatch = false;
-      const results = await getVibeResults(partnerId);
-      if (results?.data) {
-          setAllResults(results.data);
-          const partnerData = results.data.find((r: any) => r.partner_name === partnerName);
-          if (partnerData) {
-              const matchedAns = partnerData.matched_answers?.find((a: any) => a.question_id === card.id);
-              if (matchedAns?.partner_selected_option) {
-                  setTheirPick(matchedAns.partner_selected_option.toLowerCase() as "a" | "b");
-                  setRevealed(true);
-                  foundMatch = true;
-              }
-          }
-      }
+    // 2. Check if partner already answered this card from local state
+    const partnerData = allResults.find((r: any) => r.partner_name === partnerName);
+    const matchedAns = partnerData?.matched_answers?.find((a: any) => a.question_id === currentCardId);
+    const partnerPick = matchedAns?.partner_selected_option
+      ? (matchedAns.partner_selected_option.toLowerCase() as "a" | "b")
+      : null;
 
-      if (!foundMatch) {
-          setTheirPick(null);
-          setRevealed(true);
-      }
-
-    } catch (e) {
-      console.error("Failed to submit answer", e);
+    if (partnerPick) {
+      // Partner already answered: reveal match/differ immediately for inspection with 'Next card →' button
+      setTheirPick(partnerPick);
       setRevealed(true);
+    } else {
+      // Partner hasn't answered yet: show own selection badge, reveal, and smoothly auto-advance after 400ms
+      setTheirPick(null);
+      setRevealed(true);
+      autoAdvanceTimerRef.current = setTimeout(() => {
+        nextCard();
+      }, 400);
+    }
+
+    // 3. Optimistically update local allResults state so badges & matched answers stay in sync
+    setAllResults((prev: any[]) => {
+      return prev.map((r: any) => {
+        if (r.partner_name === partnerName) {
+          const existingMatched = r.matched_answers || [];
+          const updatedAnswers = existingMatched.map((ans: any) => {
+            if (ans.question_id === currentCardId) {
+              return { ...ans, my_selected_option: option, is_match: ans.partner_selected_option === option };
+            }
+            return ans;
+          });
+          if (!existingMatched.some((ans: any) => ans.question_id === currentCardId)) {
+            updatedAnswers.push({
+              question_id: currentCardId,
+              my_selected_option: option,
+              partner_selected_option: partnerPick ? (partnerPick === "a" ? "A" : "B") : null,
+              is_match: partnerPick ? ((partnerPick === "a" ? "A" : "B") === option) : false
+            });
+          }
+          return { ...r, matched_answers: updatedAnswers };
+        }
+        return r;
+      });
+    });
+
+    // 4. Background non-blocking network sync
+    if (partnerId) {
+      const currentPartnerId = partnerId;
+      (async () => {
+        try {
+          await submitVibeAnswers(currentPartnerId, [{ question_id: currentCardId, selected_option: option }]);
+          // Silently refresh server state in background without blocking UI
+          const [results, streakRes] = await Promise.all([
+            getVibeResults(currentPartnerId).catch(() => null),
+            getVibeStreak(currentPartnerId).catch(() => null)
+          ]);
+          if (results?.data) {
+            setAllResults(results.data);
+            const updatedPartner = results.data.find((r: any) => r.partner_name === partnerName);
+            const freshMatched = updatedPartner?.matched_answers?.find((a: any) => a.question_id === currentCardId);
+            if (freshMatched?.partner_selected_option) {
+              setTheirPick(freshMatched.partner_selected_option.toLowerCase() as "a" | "b");
+            }
+          }
+          if (streakRes?.current_streak !== undefined) {
+            setStreak(streakRes.current_streak);
+          }
+        } catch (e) {
+          console.error("Background sync error for vibe card answer:", e);
+        }
+      })();
     }
   };
 
   const handlePartnerSelect = (partner: any) => {
+    if (autoAdvanceTimerRef.current) {
+      clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
     setPartnerId(partner.user_id);
     setPartnerName(partner.name);
     setPartnerSheet(false);
@@ -407,6 +469,10 @@ export const PlayScreen: React.FC = () => {
   };
 
   const nextCard = () => {
+    if (autoAdvanceTimerRef.current) {
+      clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
     setLocalIndex(prev => prev + 1);
     setMyPick(null);
     setTheirPick(null);
