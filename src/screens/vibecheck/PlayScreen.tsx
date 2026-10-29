@@ -298,14 +298,20 @@ export const PlayScreen: React.FC = () => {
       const POLL_INTERVAL = 8000;
       
       // Connect to WebSocket
-      const baseUrl = api.defaults.baseURL || "http://localhost:8006";
-      const token = await AsyncStorage.getItem('access_token');
-      const wsUrl = `${baseUrl.replace('http', 'ws')}/vibecheck/cards/ws/${myUserId}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
-      
-      try {
+      const setupWebSocket = async () => {
+        try {
+          const baseUrl = api.defaults.baseURL || "http://localhost:8006";
+          const token = await AsyncStorage.getItem('access_token');
+          if (cancelled) return;
+          const wsUrl = `${baseUrl.replace('http', 'ws')}/vibecheck/cards/ws/${myUserId}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+
           ws = new WebSocket(wsUrl);
 
           ws.onopen = () => {
+            if (cancelled) {
+              ws?.close();
+              return;
+            }
             console.log("WS Connected:", wsUrl);
             // WebSocket connected — stop polling if it was started
             if (interval) {
@@ -341,12 +347,15 @@ export const PlayScreen: React.FC = () => {
                 interval = setInterval(checkPartnerAnswer, POLL_INTERVAL);
             }
           };
-      } catch (e) {
+        } catch (e) {
           console.error("Failed to setup WS:", e);
           if (!interval && !cancelled) {
               interval = setInterval(checkPartnerAnswer, POLL_INTERVAL);
           }
-      }
+        }
+      };
+
+      setupWebSocket();
     }
     return () => {
       cancelled = true;
