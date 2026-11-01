@@ -134,6 +134,7 @@ export const DatesScreen: React.FC = () => {
   const [isSavingMemory, setIsSavingMemory] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
   const [isCancellingProposal, setIsCancellingProposal] = useState(false);
+  const [isCancellingDate, setIsCancellingDate] = useState(false);
   const [confirmRemoveDate, setConfirmRemoveDate] = useState(false);
 
   const [viewerVisible, setViewerVisible] = useState(false);
@@ -514,7 +515,9 @@ export const DatesScreen: React.FC = () => {
       myPhoto,
       partnerPhoto,
       reviews: d.reviews || [],
-      photo_delete_requests: d.photo_delete_requests || []
+      photo_delete_requests: d.photo_delete_requests || [],
+      cancel_requested_by: d.cancel_requested_by,
+      cancel_reason: d.cancel_reason || d.cancelReason
     };
   };
 
@@ -1101,17 +1104,36 @@ const TimerDisplay = ({ targetDate }: { targetDate: string }) => {
                 )}
                 {selected.status === "cancelrequested" && (
                   <View style={{ width: '100%' }}>
-                    <AppText variant="serifItalic" color={Colors.muted} style={{ marginBottom: 15, textAlign: 'center' }}>
-                      Partner requested to cancel this date.
-                    </AppText>
-                    <View style={{ flexDirection: 'row', gap: 10, width: '100%' }}>
-                      <AppButton variant="accent" size="lg" style={{ flex: 1 }} onPress={() => handleRespond("accept")}>
-                        Accept Cancellation
-                      </AppButton>
-                      <AppButton variant="outline" size="lg" style={{ flex: 1 }} onPress={() => handleRespond("reject")}>
-                        Keep Date
-                      </AppButton>
-                    </View>
+                    {selected.cancel_requested_by === user?.id ? (
+                      <>
+                        <AppText variant="serifItalic" color={Colors.muted} style={{ marginBottom: 15, textAlign: 'center' }}>
+                          You requested to cancel this date. Waiting for partner...
+                        </AppText>
+                        <AppButton 
+                          variant="outline" 
+                          size="lg" 
+                          loading={isCancellingProposal}
+                          disabled={isCancellingProposal}
+                          onPress={executeCancelProposal}
+                        >
+                          Cancel Date Now
+                        </AppButton>
+                      </>
+                    ) : (
+                      <>
+                        <AppText variant="serifItalic" color={Colors.muted} style={{ marginBottom: 15, textAlign: 'center' }}>
+                          Partner requested to cancel this date{selected.cancel_reason ? `: \"${selected.cancel_reason}\"` : "."}
+                        </AppText>
+                        <View style={{ flexDirection: 'row', gap: 10, width: '100%' }}>
+                          <AppButton variant="accent" size="lg" style={{ flex: 1 }} onPress={() => handleRespond("accept")}>
+                            Accept Cancellation
+                          </AppButton>
+                          <AppButton variant="outline" size="lg" style={{ flex: 1 }} onPress={() => handleRespond("reject")}>
+                            Keep Date
+                          </AppButton>
+                        </View>
+                      </>
+                    )}
                   </View>
                 )}
               </View>
@@ -1659,13 +1681,31 @@ const TimerDisplay = ({ targetDate }: { targetDate: string }) => {
             Short, honest, kind. A few words go a long way.
           </AppText>
           <AppTextInput label="A brief reason" n="01" multiline placeholder="Something came up at work — let's try again this weekend" value={cancelReason} onChangeText={setCancelReason} style={{ minHeight: 120 }} />
-          <AppButton full variant="solid" size="lg" style={{ marginTop: 30, backgroundColor: "#1C1C1E" }} onPress={async () => {
-            if (selected) {
-              await requestCancelDate(selected.id, cancelReason);
-              setCancelSheet(false);
-              refreshAll();
-            }
-          }}>
+          <AppButton 
+            full 
+            variant="solid" 
+            size="lg" 
+            loading={isCancellingDate}
+            disabled={isCancellingDate}
+            style={{ marginTop: 30, backgroundColor: "#1C1C1E" }} 
+            onPress={async () => {
+              if (!selected || isCancellingDate) return;
+              setIsCancellingDate(true);
+              try {
+                await cancelDate(selected.id, cancelReason);
+                setCancelSheet(false);
+                setSheet(null);
+                setCancelReason("");
+                refreshAll();
+                Alert.alert("Date Cancelled", "This date has been cancelled and your partner has been notified.");
+              } catch (err: any) {
+                console.error("Failed to cancel date:", err);
+                Alert.alert("Error", err?.response?.data?.detail || "Could not cancel date.");
+              } finally {
+                setIsCancellingDate(false);
+              }
+            }}
+          >
             SEND AND CANCEL →
           </AppButton>
         </View>

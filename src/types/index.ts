@@ -82,6 +82,8 @@ export interface DateEntry {
   lateMinutes?: number;
   lateNote?: string;
   cancelReason?: string;
+  cancel_requested_by?: string;
+  cancel_reason?: string;
   utc_timestamp?: string;
   photos?: string[];
   averageRating?: number;

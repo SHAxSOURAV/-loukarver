@@ -139,8 +139,13 @@ export const requestCancelDate = async (dateId, reason) => {
   return response.data;
 };
 
-export const cancelDate = async (dateId) => {
-  const response = await api.post(`/dates/${dateId}/cancel`);
+/**
+ * @param {string} dateId
+ * @param {string} [reason]
+ */
+export const cancelDate = async (dateId, reason = '') => {
+  const payload = reason ? { reason } : {};
+  const response = await api.post(`/dates/${dateId}/cancel`, payload);
   return response.data;
 };
 
