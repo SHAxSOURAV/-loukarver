@@ -329,48 +329,55 @@ class DateService:
         if not doc:
             raise ValueError("Date not found.")
 
-        if doc["proposed_by"] == user_id:
-            if response.action in ["reject", "cancel"]:
-                updates = {"status": DateStatus.CANCELLED, "updated_at": datetime.now(timezone.utc)}
-                result = await self.dates_collection.find_one_and_update(
-                    {"_id": ObjectId(date_id)},
-                    {"$set": updates},
-                    return_document=True
-                )
-                target_id = doc["creator_id"] if user_id == doc["partner_id"] else doc["partner_id"]
-                try:
-                    await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
-                    names = await self._get_names(user_id, target_id)
-                    user_name = names.get(user_id, "Your partner")
-                    venue = doc.get("where", "the date")
-                    await notification_service.schedule_notification(
-                        sender_id=user_id,
-                        payload=NotificationCreate(
-                            recipient_id=target_id,
-                            title="Date Proposal Cancelled",
-                            message=f"{user_name} cancelled their date proposal for \"{venue}\".",
-                            type=NotificationType.SYSTEM,
-                            metadata={"screen": "Dates", "date_id": str(date_id), "action": "cancelled"}
-                        )
-                    )
-                except Exception as e:
-                    print(f"Failed to notify partner on proposal cancel: {e}")
-                return await self._map_date(result, doc["timezone"])
-            raise ValueError("You cannot accept a date that you proposed.")
-
         if doc["status"] not in [DateStatus.PROPOSED, DateStatus.CANCEL_REQUESTED]:
             raise ValueError("Date is not currently proposed or cancel-requested.")
 
-        if response.action == "accept":
-            new_status = DateStatus.ACCEPTED if doc["status"] == DateStatus.PROPOSED else DateStatus.CANCELLED
-            updates = {"status": new_status}
-            
-        elif response.action == "reject":
-            new_status = DateStatus.REJECTED if doc["status"] == DateStatus.PROPOSED else DateStatus.ACCEPTED
-            updates = {"status": new_status}
-            
-        else:
-            raise ValueError("Invalid action. Use 'accept' or 'reject'.")
+        is_cancel_requested = doc["status"] == DateStatus.CANCEL_REQUESTED
+
+        if doc["status"] == DateStatus.PROPOSED:
+            if doc["proposed_by"] == user_id:
+                if response.action in ["reject", "cancel"]:
+                    updates = {"status": DateStatus.CANCELLED, "updated_at": datetime.now(timezone.utc)}
+                    result = await self.dates_collection.find_one_and_update(
+                        {"_id": ObjectId(date_id)},
+                        {"$set": updates},
+                        return_document=True
+                    )
+                    target_id = doc["creator_id"] if user_id == doc["partner_id"] else doc["partner_id"]
+                    try:
+                        await ws_manager.broadcast_to_user(target_id, {"type": "DATE_UPDATED"})
+                        names = await self._get_names(user_id, target_id)
+                        user_name = names.get(user_id, "Your partner")
+                        venue = doc.get("where", "the date")
+                        await notification_service.schedule_notification(
+                            sender_id=user_id,
+                            payload=NotificationCreate(
+                                recipient_id=target_id,
+                                title="Date Proposal Cancelled",
+                                message=f"{user_name} cancelled their date proposal for \"{venue}\".",
+                                type=NotificationType.SYSTEM,
+                                metadata={"screen": "Dates", "date_id": str(date_id), "action": "cancelled"}
+                            )
+                        )
+                    except Exception as e:
+                        print(f"Failed to notify partner on proposal cancel: {e}")
+                    return await self._map_date(result, doc["timezone"])
+                raise ValueError("You cannot accept a date that you proposed.")
+
+            if response.action == "accept":
+                updates = {"status": DateStatus.ACCEPTED}
+            elif response.action in ["reject", "cancel"]:
+                updates = {"status": DateStatus.REJECTED}
+            else:
+                raise ValueError("Invalid action. Use 'accept' or 'reject'.")
+
+        else: # DateStatus.CANCEL_REQUESTED
+            if response.action in ["accept", "cancel"]:
+                updates = {"status": DateStatus.CANCELLED}
+            elif response.action in ["reject", "keep"]:
+                updates = {"status": DateStatus.ACCEPTED, "cancel_requested_by": None, "cancel_reason": None}
+            else:
+                raise ValueError("Invalid action. Use 'accept' or 'reject'.")
 
         updates["updated_at"] = datetime.now(timezone.utc)
         
@@ -386,12 +393,20 @@ class DateService:
             names = await self._get_names(user_id, target_id)
             user_name = names.get(user_id, "Your partner")
             venue = doc.get("where", "the date")
-            if response.action == "accept":
-                title = f"💖 Date Accepted by {user_name}!"
-                msg = f"{user_name} accepted your date at \"{venue}\"! Get ready!"
+            if is_cancel_requested:
+                if response.action in ["accept", "cancel"]:
+                    title = "❌ Date Cancelled"
+                    msg = f"{user_name} accepted the cancellation for \"{venue}\"."
+                else:
+                    title = "Date Kept"
+                    msg = f"{user_name} declined the cancellation request. Your date is still on!"
             else:
-                title = "Date Proposal Declined"
-                msg = f"{user_name} couldn't make it for \"{venue}\"."
+                if response.action == "accept":
+                    title = f"💖 Date Accepted by {user_name}!"
+                    msg = f"{user_name} accepted your date at \"{venue}\"! Get ready!"
+                else:
+                    title = "Date Proposal Declined"
+                    msg = f"{user_name} couldn't make it for \"{venue}\"."
             await notification_service.schedule_notification(
                 sender_id=user_id,
                 payload=NotificationCreate(
@@ -640,7 +655,12 @@ class DateService:
 
         result = await self.dates_collection.find_one_and_update(
             {"_id": ObjectId(date_id)},
-            {"$set": {"status": DateStatus.CANCEL_REQUESTED, "updated_at": datetime.now(timezone.utc)}},
+            {"$set": {
+                "status": DateStatus.CANCEL_REQUESTED,
+                "cancel_requested_by": user_id,
+                "cancel_reason": reason or "",
+                "updated_at": datetime.now(timezone.utc)
+            }},
             return_document=True
         )
         
@@ -666,7 +686,7 @@ class DateService:
             
         return await self._map_date(result, doc["timezone"])
 
-    async def cancel_date(self, date_id: str, user_id: str) -> Dict[str, Any]:
+    async def cancel_date(self, date_id: str, user_id: str, reason: Optional[str] = None) -> Dict[str, Any]:
         doc = await self.dates_collection.find_one({
             "_id": ObjectId(date_id),
             "$or": [{"creator_id": user_id}, {"partner_id": user_id}]
@@ -677,9 +697,16 @@ class DateService:
         if doc["status"] not in [DateStatus.ACCEPTED, DateStatus.PROPOSED, DateStatus.CANCEL_REQUESTED]:
             raise ValueError("Only proposed, accepted, or cancel-requested dates can be cancelled.")
 
+        set_fields: Dict[str, Any] = {
+            "status": DateStatus.CANCELLED,
+            "updated_at": datetime.now(timezone.utc)
+        }
+        if reason:
+            set_fields["cancel_reason"] = reason
+
         result = await self.dates_collection.find_one_and_update(
             {"_id": ObjectId(date_id)},
-            {"$set": {"status": DateStatus.CANCELLED, "updated_at": datetime.now(timezone.utc)}},
+            {"$set": set_fields},
             return_document=True
         )
         
@@ -689,7 +716,12 @@ class DateService:
             names = await self._get_names(user_id, target_id)
             user_name = names.get(user_id, "Your partner")
             venue = doc.get("where", "the date")
-            cancel_msg = f"{user_name} has cancelled the date proposal for \"{venue}\"." if doc["status"] == DateStatus.PROPOSED else f"{user_name} has cancelled your date at \"{venue}\"."
+            reason_suffix = f" Reason: \"{reason}\"" if reason else ""
+            cancel_msg = (
+                f"{user_name} has cancelled the date proposal for \"{venue}\"."
+                if doc["status"] == DateStatus.PROPOSED
+                else f"{user_name} has cancelled your date at \"{venue}\".{reason_suffix}"
+            )
             await notification_service.schedule_notification(
                 sender_id=user_id,
                 payload=NotificationCreate(
