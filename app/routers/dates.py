@@ -264,23 +264,28 @@ async def ping_date(date_id: str, payload: PingPayload, current_user: dict = Dep
         raise HTTPException(status_code=500, detail=str(e))
 
 class CancelRequestPayload(BaseModel):
-    reason: str
+    reason: Optional[str] = ""
+
+class CancelDatePayload(BaseModel):
+    reason: Optional[str] = None
 
 @router.post("/{date_id}/request_cancel", response_model=DateResponse)
-async def request_cancel(date_id: str, payload: CancelRequestPayload, current_user: dict = Depends(get_current_user)):
+async def request_cancel(date_id: str, payload: Optional[CancelRequestPayload] = None, current_user: dict = Depends(get_current_user)):
     """Request to cancel an accepted date."""
     try:
-        return await date_service.request_cancel(date_id, current_user["id"], payload.reason)
+        reason = payload.reason if payload else ""
+        return await date_service.request_cancel(date_id, current_user["id"], reason or "")
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{date_id}/cancel", response_model=DateResponse)
-async def cancel_date(date_id: str, current_user: dict = Depends(get_current_user)):
+async def cancel_date(date_id: str, payload: Optional[CancelDatePayload] = None, current_user: dict = Depends(get_current_user)):
     """Directly cancel an accepted date."""
     try:
-        return await date_service.cancel_date(date_id, current_user["id"])
+        reason = payload.reason if payload else None
+        return await date_service.cancel_date(date_id, current_user["id"], reason=reason)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:

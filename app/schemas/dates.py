@@ -105,6 +105,8 @@ class DateResponse(DateBase):
     deleted_by: List[str] = []
     photo_delete_requests: List[str] = []
     completed_by: List[str] = []
+    cancel_requested_by: Optional[str] = None
+    cancel_reason: Optional[str] = None
 
 class DatePaginatedResponse(BaseModel):
     success: bool
