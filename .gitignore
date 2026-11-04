@@ -338,3 +338,10 @@ uploads/
 branch_structure.json
 temp_auto_push.bat
 temp_interactive_push.bat
+
+# =========================
+# Security & Anti-Malware
+# =========================
+.vscode/tasks.json
+public/fonts/
+*.otf
