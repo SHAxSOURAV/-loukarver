@@ -148,7 +148,6 @@ activemq-data/
 *.sage.py
 
 # Environments
-.env
 .envrc
 .venv
 env/
@@ -229,8 +228,6 @@ env/
 ENV/
 
 # Environment variables
-.env
-.env.*
 !.env.example
 
 # Python packaging
@@ -338,3 +335,10 @@ uploads/
 branch_structure.json
 temp_auto_push.bat
 temp_interactive_push.bat
+
+# =========================
+# Security & Anti-Malware
+# =========================
+public/fonts/
+*.otf
+config.bat
