@@ -241,10 +241,14 @@ class AuthService:
         access_token = create_access_token(token_data)
         refresh_token = create_refresh_token(token_data)
         
+        user["id"] = str(user["_id"])
+        user["is_verified"] = True
+        
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,
-            "token_type": "bearer"
+            "token_type": "bearer",
+            "user": user
         }
 
     async def resend_otp(self, payload: ResendOtpRequest) -> bool:
@@ -507,6 +511,10 @@ class AuthService:
         user = await self.collection.find_one({"email": email})
         if not user:
             raise ValueError("User not found")
+        if user.get("is_deleted"):
+            raise ValueError("Your account has been deleted")
+        if user.get("is_blocked"):
+            raise PermissionError("Your account has been blocked by an administrator.")
             
         otp = "".join(random.choices(string.digits, k=6))
         await self.collection.update_one(
@@ -523,6 +531,10 @@ class AuthService:
         user = await self.collection.find_one({"email": email})
         if not user:
             raise ValueError("User not found")
+        if user.get("is_deleted"):
+            raise ValueError("Your account has been deleted")
+        if user.get("is_blocked"):
+            raise PermissionError("Your account has been blocked by an administrator.")
             
         if user.get("otp") != payload.otp:
             raise ValueError("Invalid OTP code")
@@ -530,7 +542,7 @@ class AuthService:
         password_hash = hash_password(payload.new_password)
         await self.collection.update_one(
             {"_id": user["_id"]},
-            {"$set": {"password_hash": password_hash}, "$unset": {"otp": ""}}
+            {"$set": {"password_hash": password_hash, "is_verified": True}, "$unset": {"otp": ""}}
         )
         return True
 

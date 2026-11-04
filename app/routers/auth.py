@@ -99,7 +99,12 @@ async def admin_signup(payload: AdminSignupRequest):
 async def verify_email(payload: VerifyEmailRequest):
     """Verifies a user email using the 6-digit OTP code received during signup."""
     try:
-        return await auth_service.verify_email(payload)
+        result = await auth_service.verify_email(payload)
+        return TokenResponse(
+            access_token=result["access_token"],
+            refresh_token=result["refresh_token"],
+            user=result.get("user")
+        )
     except ValueError as ve:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:
@@ -233,7 +238,12 @@ async def forgot_password(payload: ForgotPasswordRequest):
     except ValueError as ve:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Account not found, create a new account."
+            detail=str(ve)
+        )
+    except PermissionError as pe:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(pe)
         )
     except Exception as e:
         raise HTTPException(
@@ -253,10 +263,13 @@ async def reset_password(payload: ResetPasswordRequest):
         
         return TokenResponse(
             access_token=result["access_token"],
-            refresh_token=result["refresh_token"]
+            refresh_token=result["refresh_token"],
+            user=result.get("user")
         )
     except ValueError as ve:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except PermissionError as pe:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(pe))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
