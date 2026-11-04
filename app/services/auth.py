@@ -7,6 +7,7 @@ import uuid
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formatdate, make_msgid
 from app.services.notification import notification_service
 from app.schemas.notification import NotificationCreate, NotificationType
 from datetime import datetime, timedelta, timezone
@@ -68,10 +69,17 @@ def send_otp_email(to_email: str, otp: str, subject: str = "Verify your email - 
         return False
         
     try:
-        msg = MIMEMultipart()
-        msg['From'] = f"Samesy <{settings.FROM_EMAIL or settings.SMTP_USER}>"
-        msg['To'] = to_email
-        msg['Subject'] = subject
+        msg = MIMEMultipart("alternative")
+        from_address = settings.FROM_EMAIL or settings.SMTP_USER
+        msg["From"] = f"Samesy <{from_address}>"
+        msg["To"] = to_email
+        msg["Subject"] = subject
+        msg["Date"] = formatdate(localtime=True)
+        domain = from_address.split("@")[-1] if "@" in from_address else "loukarver.com"
+        msg["Message-ID"] = make_msgid(domain=domain)
+        msg["Reply-To"] = f"Samesy <{from_address}>"
+        msg["Auto-Submitted"] = "auto-generated"
+        msg["X-Auto-Response-Suppress"] = "All"
         
         plain_body = f"""Welcome to Samesy. Here is your key to get in.
         
@@ -80,34 +88,34 @@ Your One-Time Password (OTP) is: {otp}
 This code unlocks your account for the next 15 minutes.
 If you didn't request this, you can safely ignore this email.
 """
-        msg.attach(MIMEText(plain_body, 'plain'))
+        msg.attach(MIMEText(plain_body, "plain", "utf-8"))
         
-        html_body = f"""
-        <html>
-        <head>
-            <style>
-                @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500&display=swap');
-            </style>
-        </head>
-        <body style="font-family: 'Inter', Arial, sans-serif; background-color: #EFE7DD; padding: 40px 20px; color: #1A1614; margin: 0;">
-            <div style="max-width: 500px; margin: 0 auto; background: #FFFFFF; border-radius: 16px; padding: 40px; box-shadow: 0 10px 25px rgba(26, 22, 20, 0.05); border: 1px solid #C9BDA5;">
-                <h1 style="font-family: 'Playfair Display', serif; color: #B8553E; text-align: center; margin-bottom: 8px; font-size: 32px; font-weight: 600; letter-spacing: -0.5px;">Samesy.</h1>
-                <p style="font-family: 'Playfair Display', serif; font-style: italic; text-align: center; color: #8A7E6C; margin-top: 0; margin-bottom: 32px; font-size: 16px;">Welcome to Samesy. Here is your key to get in.</p>
-                
-                <div style="font-size: 36px; font-family: 'Inter', sans-serif; font-weight: 500; text-align: center; margin: 40px 0; letter-spacing: 8px; color: #1A1614; background: #EFE7DD; padding: 24px; border-radius: 12px; border: 1px dashed #B8553E;">
-                    {otp}
-                </div>
-                
-                <p style="font-size: 13px; color: #8A7E6C; text-align: center; margin-top: 40px; line-height: 1.6;">
-                    This code unlocks your account for the next 15 minutes.<br>If you didn't request this, you can safely ignore this email.
-                </p>
-            </div>
-        </body>
-        </html>
-        """
-        msg.attach(MIMEText(html_body, 'html'))
+        html_body = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Samesy Security Code</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #EFE7DD; padding: 40px 20px; color: #1A1614; margin: 0;">
+    <div style="max-width: 500px; margin: 0 auto; background: #FFFFFF; border-radius: 16px; padding: 40px; box-shadow: 0 10px 25px rgba(26, 22, 20, 0.05); border: 1px solid #C9BDA5;">
+        <h1 style="font-family: Georgia, serif; color: #B8553E; text-align: center; margin-bottom: 8px; font-size: 32px; font-weight: 600; letter-spacing: -0.5px;">Samesy.</h1>
+        <p style="font-family: Georgia, serif; font-style: italic; text-align: center; color: #8A7E6C; margin-top: 0; margin-bottom: 32px; font-size: 16px;">Welcome to Samesy. Here is your key to get in.</p>
         
-        server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT)
+        <div style="font-size: 36px; font-weight: 600; text-align: center; margin: 30px 0; letter-spacing: 8px; color: #1A1614; background: #EFE7DD; padding: 24px; border-radius: 12px; border: 1px dashed #B8553E;">
+            {otp}
+        </div>
+        
+        <p style="font-size: 13px; color: #8A7E6C; text-align: center; margin-top: 30px; line-height: 1.6;">
+            This code unlocks your account for the next 15 minutes.<br>If you didn't request this, you can safely ignore this email.
+        </p>
+    </div>
+</body>
+</html>
+"""
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
+        
+        server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15)
         server.starttls()
         server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
         server.sendmail(settings.SMTP_USER, to_email, msg.as_string())
